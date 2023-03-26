@@ -38,7 +38,7 @@ int main()
     float *memory_page_locked = nullptr;
     checkRuntime(cudaMallocHost(&memory_page_locked, 100 * sizeof(float)));
     printf("memory_page_locked = %p\n", memory_page_locked);
-
+    // 同步copy
     checkRuntime(cudaMemcpy(memory_page_locked, memory_device, sizeof(float) * 100, cudaMemcpyDeviceToHost));
 
     printf("memory_page_locked[2] = %f\n", memory_page_locked[2]);

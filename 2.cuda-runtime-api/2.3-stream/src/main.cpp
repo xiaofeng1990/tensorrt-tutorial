@@ -25,19 +25,24 @@ int main()
     checkRuntime(cudaSetDevice(device_id));
 
     cudaStream_t stream = nullptr;
+    // create a cuda stream
     checkRuntime(cudaStreamCreate(&stream));
 
     float *memory_device = nullptr;
+    // allocate memory on device(GPU)
     checkRuntime(cudaMalloc(&memory_device, 100 * sizeof(float)));
     printf("memory_device = %p\n", memory_device);
 
     float *memory_host = new float[100];
     memory_host[2] = 520.25;
+    // copy host memory data to device memory async using our stream
     checkRuntime(cudaMemcpyAsync(memory_device, memory_host, sizeof(float) * 100, cudaMemcpyHostToDevice, stream));
     printf("memory_device = %p\n", memory_device);
 
+    // allocate memory on host(CPU)
     float *memory_page_locked = nullptr;
     checkRuntime(cudaMallocHost(&memory_page_locked, 100 * sizeof(float)));
+    // copy device memory data to host memory async using our stream
     checkRuntime(cudaMemcpyAsync(memory_page_locked, memory_device, sizeof(float) * 100, cudaMemcpyDeviceToHost, stream));
     printf("memory_page_locked[2] = %f\n", memory_page_locked[2]);
     // 等待stream中的队列处理完
