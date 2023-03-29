@@ -36,6 +36,23 @@ else()
     message(FATA_ERROR "Do not find CUDA")
 endif()
 
+
+find_package(OpenCV  REQUIRED)
+if(OpenCV_FOUND)
+    
+    message(STATUS "OpenCV library status:")
+    message(STATUS "    version: ${OpenCV_VERSION}")
+    message(STATUS "    include path: ${OpenCV_INCLUDE_DIRS}")
+    message(STATUS "    lib : ${OpenCV_LIBS}")
+   
+    include_directories(${OpenCV_INCLUDE_DIRS})
+    set(LINK_LIBS ${LINK_LIBS} ${OpenCV_LIBS})
+else()
+    message(FATA_ERROR "Do not find OpenCV")
+endif()
+
+
+
 add_subdirectory(2.1-hello-runtime)
 add_subdirectory(2.2-memory)
 add_subdirectory(2.3-stream)
@@ -44,3 +61,4 @@ add_subdirectory(2.5-thread-layout)
 add_subdirectory(2.6-vector-add)
 add_subdirectory(2.7-shared-memory)
 add_subdirectory(2.8-reduce-sum)
+add_subdirectory(2.12-yolov5-postprocess)

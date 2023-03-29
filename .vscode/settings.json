@@ -39,6 +39,16 @@
         "system_error": "cpp",
         "type_traits": "cpp",
         "tuple": "cpp",
-        "typeinfo": "cpp"
+        "typeinfo": "cpp",
+        "complex": "cpp",
+        "condition_variable": "cpp",
+        "cstddef": "cpp",
+        "cstring": "cpp",
+        "deque": "cpp",
+        "list": "cpp",
+        "iomanip": "cpp",
+        "memory": "cpp",
+        "mutex": "cpp",
+        "thread": "cpp"
     }
 }
