@@ -95,7 +95,65 @@ std::vector<Box> decode_cpu(float *predict, int rows, int clos, float confidence
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
 
-    printf("cuda yolov5 postprocess %ld ns\n", timestamp2 - timestamp1);
+    printf("cpu yolov5 postprocess %ld ns\n", timestamp2 - timestamp1);
+
+    return box_result;
+}
+void decode_kernel_invoker(float *predict, int num_bboxes, int num_classes, float confidence_threshold,
+                           float nms_threshold, float *invert_affine_matrix, float *parray, int max_objects,
+                           int NUM_BOX_ELEMENT, cudaStream_t stream);
+
+std::vector<Box> decode_gpu(float *predict, int rows, int cols,
+                            float confidence_threshold = 0.25f,
+                            float nms_threshold = 0.45f)
+{
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+
+    std::vector<Box> box_result;
+    cudaStream_t stream = nullptr;
+    checkRuntime(cudaStreamCreate(&stream));
+    float *predict_device = nullptr;
+    float *output_device = nullptr;
+    float *output_host = nullptr;
+    int max_objects = 100;
+    // left, top, right, bottom, confidence, class, keepflag
+    int NUM_BOX_ELEMENT = 7;
+    checkRuntime(cudaMalloc(&predict_device, rows * cols * sizeof(float)));
+    checkRuntime(cudaMalloc(&output_device, sizeof(float) + max_objects * NUM_BOX_ELEMENT * sizeof(float)));
+    checkRuntime(cudaMallocHost(&output_host, sizeof(float) + max_objects * NUM_BOX_ELEMENT * sizeof(float)));
+    // 异步将host数据cpy到device
+    checkRuntime(cudaMemcpyAsync(predict_device, predict, rows * cols * sizeof(float), cudaMemcpyHostToDevice, stream));
+    decode_kernel_invoker(
+        predict_device, rows, cols - 5, confidence_threshold,
+        nms_threshold, nullptr, output_device, max_objects, NUM_BOX_ELEMENT, stream);
+
+    checkRuntime(cudaMemcpyAsync(output_host, output_device,
+                                 sizeof(int) + max_objects * NUM_BOX_ELEMENT * sizeof(float),
+                                 cudaMemcpyDeviceToHost, stream));
+
+    checkRuntime(cudaStreamSynchronize(stream));
+
+    int num_boxes = std::min((int)output_host[0], max_objects);
+    for (int i = 0; i < num_boxes; ++i)
+    {
+        float *ptr = output_host + 1 + NUM_BOX_ELEMENT * i;
+        int keep_flag = ptr[6];
+        if (keep_flag)
+        {
+            box_result.emplace_back(
+                ptr[0], ptr[1], ptr[2], ptr[3], ptr[4], (int)ptr[5]);
+        }
+    }
+    checkRuntime(cudaStreamDestroy(stream));
+    checkRuntime(cudaFree(predict_device));
+    checkRuntime(cudaFree(output_device));
+    checkRuntime(cudaFreeHost(output_host));
+
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+
+    printf("gpu yolov5 postprocess %ld ns\n", timestamp2 - timestamp1);
 
     return box_result;
 }
@@ -111,8 +169,8 @@ int main()
     int nelem = data.size() / sizeof(float);
     int ncols = 85;
     int nrows = nelem / ncols;
-    auto boxes = decode_cpu(ptr, nrows, ncols);
-
+    // auto boxes = decode_cpu(ptr, nrows, ncols);
+    auto boxes = decode_gpu(ptr, nrows, ncols);
     for (auto &box : boxes)
     {
         cv::rectangle(image, cv::Point(box.left, box.top), cv::Point(box.right, box.bottom), cv::Scalar(0, 255, 0), 2);
