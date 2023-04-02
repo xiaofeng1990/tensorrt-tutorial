@@ -52,6 +52,5 @@ else()
     message(FATA_ERROR "Do not find OpenCV")
 endif()
 
-
-
 add_subdirectory(3.1.hello-tensorrt)
+add_subdirectory(3.2.hello-inference)

@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <box.hpp>
 
 std::vector<uint8_t> load_file(const std::string &file)
 {
