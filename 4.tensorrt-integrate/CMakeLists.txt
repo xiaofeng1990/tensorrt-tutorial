@@ -37,7 +37,6 @@ else()
 endif()
 set(TENSORRT_DIR "")
 
-
 find_package(OpenCV  REQUIRED)
 if(OpenCV_FOUND)
     
@@ -52,7 +51,5 @@ else()
     message(FATA_ERROR "Do not find OpenCV")
 endif()
 
-add_subdirectory(3.1.hello-tensorrt)
-add_subdirectory(3.2.hello-inference)
-add_subdirectory(3.3.cnn-and-dynamic-shape)
-add_subdirectory(3.5.onnx-parser)
+add_subdirectory(4.1.full-cnn-classifier)
+
