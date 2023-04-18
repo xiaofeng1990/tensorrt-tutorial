@@ -1,3 +1,7 @@
 build/
 *.engine
 *.onnx
+*.pt
+yolov5-6.0/
+*.pth
+unet-pytorch-main/
