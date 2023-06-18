@@ -201,7 +201,8 @@ bool build_model()
         return false;
     }
 
-    int maxBatchSize = 10;
+    int maxBatchSize = 5;
+    int minBatchSize = 5;
     printf("Workspace Size = %.2f MB\n", (1 << 28) / 1024.0f / 1024.0f);
     config->setMaxWorkspaceSize(1 << 28);
     auto profile = builder->createOptimizationProfile();
@@ -217,7 +218,7 @@ bool build_model()
     std::cout << std::endl;
 
     // 配置最小、最优、最大范围
-    input_dims.d[0] = 1;
+    input_dims.d[0] = minBatchSize;
     profile->setDimensions(input_tensor->getName(), nvinfer1::OptProfileSelector::kMIN, input_dims);
     profile->setDimensions(input_tensor->getName(), nvinfer1::OptProfileSelector::kOPT, input_dims);
     input_dims.d[0] = maxBatchSize;
@@ -284,7 +285,8 @@ std::vector<std::string> load_labels(const char *file)
 void inference()
 {
     TRTLogger logger;
-    std::string engine_file = root_path + "yolov5s.engine";
+
+    std::string engine_file = root_path + "yolov5s.onnx.engine";
     auto engine_data = load_file(engine_file);
     auto runtime = make_shared(nvinfer1::createInferRuntime(logger));
     auto engine = make_shared(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
@@ -307,7 +309,7 @@ void inference()
     printf("engine->getBindingName(0) %s\n", engine->getBindingName(0));
     printf("engine->getName %s\n", engine->getName());
     auto dims = engine->getBindingDimensions(0);
-    int input_batch = 1;
+    int input_batch = dims.d[0];
     int input_channel = dims.d[1];
     int input_height = dims.d[2];
     int input_width = dims.d[3];
@@ -370,12 +372,13 @@ void inference()
 
     // 3x3输入，对应3x3输出
     auto output_dims = engine->getBindingDimensions(1);
+    int output_batch_size = output_dims.d[0];
     int output_numbox = output_dims.d[1];
     int output_numprob = output_dims.d[2];
 
-    printf("output_numbox %d, output_numprob %d \n", output_numbox, output_numprob);
+    printf("output_batch_size %d, output_numbox %d, output_numprob %d \n", output_batch_size, output_numbox, output_numprob);
     int num_classes = output_numprob - 5;
-    int output_numel = input_batch * output_numbox * output_numprob;
+    int output_numel = output_batch_size * output_numbox * output_numprob;
     float *output_data_host = nullptr;
     float *output_data_device = nullptr;
     checkRuntime(cudaMallocHost(&output_data_host, sizeof(float) * output_numel));
@@ -505,10 +508,10 @@ void inference()
 
 int main()
 {
-    if (!build_model())
-    {
-        return -1;
-    }
+    // if (!build_model())
+    // {
+    //     return -1;
+    // }
     inference();
     return 0;
 }

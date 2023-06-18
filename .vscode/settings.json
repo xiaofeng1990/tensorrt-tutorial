@@ -49,6 +49,8 @@
         "iomanip": "cpp",
         "memory": "cpp",
         "mutex": "cpp",
-        "thread": "cpp"
+        "thread": "cpp",
+        "future": "cpp",
+        "atomic": "cpp"
     }
 }
