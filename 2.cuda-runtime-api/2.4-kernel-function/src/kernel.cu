@@ -2,8 +2,16 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
+// CPU调用，在GPU上执行
 __global__ void test_print_kernel(const float *pdata, int ndata)
 {
+    // threadIdx blockIdx  blockDim 内置变量
+
+    // threadIdx;
+    // blockIdx;
+    // blockDim; threadIdx 表示第几个block
+    // gridDim; blockIdx 表示第几个grid
+
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
 
     /*

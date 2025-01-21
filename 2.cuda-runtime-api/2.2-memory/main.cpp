@@ -26,15 +26,18 @@ int main()
     int device_id = 0;
     checkRuntime(cudaSetDevice(device_id));
 
+    // global memory on device(GPU)
     float *memory_device = nullptr;
     checkRuntime(cudaMalloc(&memory_device, 100 * sizeof(float)));
     printf("memory_device = %p\n", memory_device);
 
+    // pageable memory on host(CPU) GPU 不可以字节访问
     float *memory_host = new float[100];
     memory_host[2] = 520.25;
     checkRuntime(cudaMemcpy(memory_device, memory_host, sizeof(float) * 100, cudaMemcpyHostToDevice));
     printf("memory_device = %p\n", memory_device);
 
+    // pinned memory page locked memory GPU 可以字节访问
     float *memory_page_locked = nullptr;
     checkRuntime(cudaMallocHost(&memory_page_locked, 100 * sizeof(float)));
     printf("memory_page_locked = %p\n", memory_page_locked);

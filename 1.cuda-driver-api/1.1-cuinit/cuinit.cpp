@@ -57,5 +57,18 @@ int main()
         return -1;
     }
     printf("Device %d name is %s\n", device, device_name);
+
+    CUuuid uuid;
+    if (!checkDriver(cuDeviceGetUuid(&uuid, device)))
+    {
+        return -1;
+    }
+    printf("Device %d uuid is %s\n", device, uuid.bytes);
+    size_t mem_size;
+    if (!checkDriver(cuDeviceTotalMem(&mem_size, device)))
+    {
+        return -1;
+    }
+    printf("Device %d mem size  is %ld G\n", device, ((mem_size / 1024) / 1024) / 1024);
     return 0;
 }

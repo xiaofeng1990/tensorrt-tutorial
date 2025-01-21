@@ -4,7 +4,8 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
 #include <string.h>
-
+// https://developer.nvidia.com/cuda-toolkit-archive
+// https://docs.nvidia.com/cuda/archive/11.2.0/
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
 
 bool __check_cuda_runtime(cudaError_t code, const char *op, const char *file, int line)
@@ -41,6 +42,7 @@ int main()
     // 注意，context是线程内作用的，其他线程不相关的, 一个线程一个context stack
     int device_id = 0;
     printf("set current device to : %d，这个API依赖CUcontext，触发创建并设置\n", device_id);
+    // cuDevicePrimaryCtxRetain
     checkRuntime(cudaSetDevice(device_id));
 
     // 注意，是由于set device函数是“第一个执行的需要context的函数”，所以他会执行cuDevicePrimaryCtxRetain

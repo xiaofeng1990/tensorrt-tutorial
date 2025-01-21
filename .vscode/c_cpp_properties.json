@@ -4,7 +4,7 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/usr/local/cuda-10.2/targets/aarch64-linux/include",
+                "/usr/local/cuda-11.4/targets/aarch64-linux/include",
                 "/usr/include/opencv4/"
             ],
             "defines": [],
