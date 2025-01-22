@@ -30,6 +30,9 @@ int main()
     checkRuntime(cudaGetDeviceProperties(&prop, 0));
     printf("prop.sharedMemPerBlock = %.2f KB\n", prop.sharedMemPerBlock / 1024.0f);
 
+    printf("prop.maxGridSize x = %d, y = %d z = %d\n", prop.maxGridSize[0], prop.maxGridSize[1], prop.maxGridSize[2]);
+    printf("prop.maxThreadsDim x = %d, y = %d z = %d\n", prop.maxThreadsDim[0], prop.maxThreadsDim[1], prop.maxThreadsDim[2]);
+    printf("prop.maxThreadsPerBlock %d \n", prop.maxThreadsPerBlock);
     launch();
     checkRuntime(cudaPeekAtLastError());
     // 等待device运行完毕

@@ -6,12 +6,14 @@
 /*
 demo1 主要为了展示查看静态和动态共享变量的地址
  */
+// 静态共享内存
 const size_t static_shared_memory_num_element = 6 * 1024; // 6KB
 __shared__ char static_shared_memory[static_shared_memory_num_element];
 __shared__ char static_shared_memory2[2];
 
 __global__ void demo1_kernel()
 {
+    // 动态共享内存
     extern __shared__ char dynamic_shared_memory[]; // 静态共享变量和动态共享变量在kernel函数内/外定义都行，没有限制
     extern __shared__ char dynamic_shared_memory2[];
     printf("static_shared_memory = %p\n", static_shared_memory); // 静态共享变量，定义几个地址随之叠加

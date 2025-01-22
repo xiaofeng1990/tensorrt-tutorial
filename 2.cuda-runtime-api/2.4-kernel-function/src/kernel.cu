@@ -9,9 +9,8 @@ __global__ void test_print_kernel(const float *pdata, int ndata)
 
     // threadIdx;
     // blockIdx;
-    // blockDim; threadIdx 表示第几个block
-    // gridDim; blockIdx 表示第几个grid
-
+    // blockDim; threadIdx 表示block中thread索引
+    // gridDim; blockIdx 表示grid中block的索引
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
 
     /*
@@ -38,9 +37,10 @@ void test_print(const float *pdata, int ndata)
     dim3 blockDim;
     int nthreads = gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
 
-    // gridDim(21亿, 65536, 65536) // 可以通过runtime API 查询
-    // blockDim(1024, 64, 64)   blockDim.x * blockDim.y * blockDim.z<=1024
+    // gridDim(21亿, 65536, 65536) //
+    // blockDim(1024, 64, 64)  blockDim.x * blockDim.y * blockDim.z<=1024
     //  <<< gridDim, blockDim,  bytes_of_shared_memory, stream>>>
+    // gridDim 定义线程格尺寸里面有多少线程快 blockDim定义线程快里面有多少线程
     test_print_kernel<<<dim3(2), dim3(ndata / 2), 0, nullptr>>>(pdata, ndata);
     // 在核函数执行结束后，通过 cudaPeekAtLastError 判断是否执行错误
     //  cudaPeekAtLastError 和 cudaGetLastError 都可以获取错误代码

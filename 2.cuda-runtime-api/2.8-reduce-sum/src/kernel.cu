@@ -56,6 +56,6 @@ void launch_reduce_sum(float *array, int n, float *output)
     printf("block_sqrt = %.2f\n", block_sqrt);
     block_size = pow(2, block_sqrt);
     printf("block_size = %d, grid_size = %d\n", block_size, grid_size);
-
+    printf("share memory size = %d \n", block_size * sizeof(float));
     sum_kernel<<<grid_size, block_size, block_size * sizeof(float), nullptr>>>(array, n, output);
 }

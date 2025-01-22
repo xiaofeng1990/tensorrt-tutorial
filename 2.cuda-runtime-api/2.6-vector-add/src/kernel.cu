@@ -4,6 +4,7 @@
 
 __global__ void vector_add_kernel(const float *a, const float *b, float *c, int ndata)
 {
+    // 多分配出来的线程不参与计算，放置内存越界
     int idx = threadIdx.x + blockIdx.x * blockDim.x;
     if (idx >= ndata)
         return;
@@ -32,6 +33,7 @@ void vector_add(const float *a, const float *b, float *c, int ndata)
     //  如果ndata < nthreads 那block_size = ndata就够了
     int block_size = ndata < nthreads ? ndata : nthreads;
     // 其含义是我需要多少个blocks可以处理完所有的任务
+    // 取整数
     int grid_size = (ndata + block_size - 1) / block_size;
     printf("block_size = %d, grid_size = %d\n", block_size, grid_size);
 

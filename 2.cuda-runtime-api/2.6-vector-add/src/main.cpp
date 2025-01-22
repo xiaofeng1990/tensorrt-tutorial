@@ -42,9 +42,19 @@ int main()
 {
 
     const int size = 100000000;
+    // const int size = 1028;
+    // pageable memory
     float *vector_a = new float[size];
     float *vector_b = new float[size];
     float *vector_c = new float[size];
+
+    // GPU 访问 pinned memory page locked memory 更快
+    // float *vector_a;
+    // float *vector_b;
+    // float *vector_c;
+    // checkRuntime(cudaMallocHost(&vector_a, size * sizeof(float)));
+    // checkRuntime(cudaMallocHost(&vector_b, size * sizeof(float)));
+    // checkRuntime(cudaMallocHost(&vector_c, size * sizeof(float)));
 
     for (int i = 0; i < size; i++)
     {
@@ -61,17 +71,18 @@ int main()
     checkRuntime(cudaMalloc(&vector_a_device, size * sizeof(float)));
     checkRuntime(cudaMalloc(&vector_b_device, size * sizeof(float)));
     checkRuntime(cudaMalloc(&vector_c_device, size * sizeof(float)));
-    checkRuntime(cudaMemcpy(vector_a_device, vector_a, size * sizeof(float), cudaMemcpyHostToDevice));
-    checkRuntime(cudaMemcpy(vector_b_device, vector_b, size * sizeof(float), cudaMemcpyHostToDevice));
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    checkRuntime(cudaMemcpy(vector_a_device, vector_a, size * sizeof(float), cudaMemcpyHostToDevice));
+    checkRuntime(cudaMemcpy(vector_b_device, vector_b, size * sizeof(float), cudaMemcpyHostToDevice));
+
     vector_add(vector_a_device, vector_b_device, vector_c_device, size);
+
     checkRuntime(cudaMemcpy(vector_c, vector_c_device, size * sizeof(float), cudaMemcpyDeviceToHost));
     checkRuntime(cudaDeviceSynchronize()); // 进行同步，这句话以上的代码全部可以异步操作
 
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
-
     printf("cuda vector add [0--%d] time %ld ms\n", size, timestamp2 - timestamp1);
 
     // for (int i = 0; i < size; ++i)
@@ -81,5 +92,13 @@ int main()
     checkRuntime(cudaFree(vector_a_device));
     checkRuntime(cudaFree(vector_b_device));
     checkRuntime(cudaFree(vector_c_device));
+
+    // checkRuntime(cudaFreeHost(vector_a));
+    // checkRuntime(cudaFreeHost(vector_b));
+    // checkRuntime(cudaFreeHost(vector_c));
+
+    delete vector_a;
+    delete vector_b;
+    delete vector_c;
     return 0;
 }
