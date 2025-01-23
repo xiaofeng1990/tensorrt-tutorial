@@ -44,17 +44,17 @@ int main()
     const int size = 100000000;
     // const int size = 1028;
     // pageable memory
-    float *vector_a = new float[size];
-    float *vector_b = new float[size];
-    float *vector_c = new float[size];
+    // float *vector_a = new float[size];
+    // float *vector_b = new float[size];
+    // float *vector_c = new float[size];
 
     // GPU 访问 pinned memory page locked memory 更快
-    // float *vector_a;
-    // float *vector_b;
-    // float *vector_c;
-    // checkRuntime(cudaMallocHost(&vector_a, size * sizeof(float)));
-    // checkRuntime(cudaMallocHost(&vector_b, size * sizeof(float)));
-    // checkRuntime(cudaMallocHost(&vector_c, size * sizeof(float)));
+    float *vector_a;
+    float *vector_b;
+    float *vector_c;
+    checkRuntime(cudaMallocHost(&vector_a, size * sizeof(float)));
+    checkRuntime(cudaMallocHost(&vector_b, size * sizeof(float)));
+    checkRuntime(cudaMallocHost(&vector_c, size * sizeof(float)));
 
     for (int i = 0; i < size; i++)
     {
@@ -93,12 +93,12 @@ int main()
     checkRuntime(cudaFree(vector_b_device));
     checkRuntime(cudaFree(vector_c_device));
 
-    // checkRuntime(cudaFreeHost(vector_a));
-    // checkRuntime(cudaFreeHost(vector_b));
-    // checkRuntime(cudaFreeHost(vector_c));
+    checkRuntime(cudaFreeHost(vector_a));
+    checkRuntime(cudaFreeHost(vector_b));
+    checkRuntime(cudaFreeHost(vector_c));
 
-    delete vector_a;
-    delete vector_b;
-    delete vector_c;
+    // delete vector_a;
+    // delete vector_b;
+    // delete vector_c;
     return 0;
 }
