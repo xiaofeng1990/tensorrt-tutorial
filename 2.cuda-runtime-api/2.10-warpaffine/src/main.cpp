@@ -2,7 +2,7 @@
 #include <cuda_runtime.h>
 #include <opencv2/opencv.hpp>
 #include <stdio.h>
-
+#include <opencv2/cudawarping.hpp>
 #include <opencv2/core/cuda.hpp>
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
 
@@ -61,7 +61,7 @@ cv::Mat warpaffine_to_center_align(const cv::Mat &image, const cv::Size &size)
 }
 
 #else
-cv::Mat warpaffine_to_center_align(const cv::Mat &image, const cv::Size &size)
+cv::cuda::HostMem warpaffine_to_center_align(cv::Mat &image, const cv::Size &size)
 {
     /*
        建议先阅读代码，若有疑问，可点击抖音短视频进行辅助讲解(建议1.5倍速观看)
@@ -70,7 +70,7 @@ cv::Mat warpaffine_to_center_align(const cv::Mat &image, const cv::Size &size)
     */
 
     // cv::Mat output(size, CV_8UC3);
-    // cv::cuda::HostMem output(size, CV_8UC3);
+    cv::cuda::HostMem output(size, CV_8UC3);
 
     uint8_t *psrc_device = nullptr;
     uint8_t *pdst_device = nullptr;
@@ -85,19 +85,21 @@ cv::Mat warpaffine_to_center_align(const cv::Mat &image, const cv::Size &size)
     checkRuntime(cudaMalloc(&psrc_device, src_size));
     checkRuntime(cudaMalloc(&pdst_device, dst_size));
 
-    memcpy(psrc_host, image.data, src_size);
+    // memcpy(psrc_host, image.data, src_size);
 
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
-    checkRuntime(cudaMemcpy(psrc_device, psrc_host, src_size, cudaMemcpyHostToDevice)); // 搬运数据到GPU上
+    // 搬运数据到GPU上
+    // checkRuntime(cudaMemcpy(psrc_device, psrc_host, src_size, cudaMemcpyHostToDevice));
+    checkRuntime(cudaMemcpy(psrc_device, image.data, src_size, cudaMemcpyHostToDevice));
 
     warp_affine_bilinear(
         psrc_device, image.cols * 3, image.cols, image.rows,
         pdst_device, size.width * 3, size.width, size.height,
         114);
 
-    // checkRuntime(cudaMemcpy(output.data, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
-    checkRuntime(cudaMemcpy(pdst_host, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
+    checkRuntime(cudaMemcpy(output.data, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
+    // checkRuntime(cudaMemcpy(pdst_host, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
     printf("gpu warp affine time %ld ms\n", timestamp2 - timestamp1);
@@ -107,7 +109,7 @@ cv::Mat warpaffine_to_center_align(const cv::Mat &image, const cv::Size &size)
     checkRuntime(cudaFree(psrc_device));
     checkRuntime(cudaFree(pdst_device));
 
-    cv::Mat output(size.height, size.width, CV_8UC3, (unsigned *)pdst_host);
+    // cv::Mat output(size.height, size.width, CV_8UC3, (unsigned *)pdst_host);
 
     return output;
 }
@@ -145,8 +147,74 @@ cv::Mat warp_affine_cpu(const cv::Mat &src)
 
     cv::Mat warpt_image(input_height, input_width, CV_8UC3);
     // 对图像做平移缩放旋转变换,可逆
+
+    // cv::cuda::GpuMat g_m2x3_i2d(m2x3_i2d);
+
+    // cv::cuda::GpuMat g_src(src);
+    // cv::cuda::GpuMat g_warpt_image(input_height, input_width, CV_8UC3);
+    // cv::warpAffine(src, warpt_image, m2x3_i2d, warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
+    //    cv::Scalar::all(114));
+    // cv::cuda::warpAffine(g_src, g_warpt_image, m2x3_i2d, g_warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
+    //                      cv::Scalar::all(114));
+    // cv::Mat warpt_image;
+    // g_warpt_image.download(warpt_image);
+
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
     cv::warpAffine(src, warpt_image, m2x3_i2d, warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
                    cv::Scalar::all(114));
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    printf("cpu warp affine time %ld ms\n", timestamp2 - timestamp1);
+
+    return warpt_image;
+}
+
+cv::cuda::HostMem warp_affine_opencv_gpu(cv::Mat &src)
+{
+    // warpAffine
+    int input_channel = 3;
+    int input_height = 640;
+    int input_width = 640;
+
+    float scale_x = input_width / (float)src.cols;
+    float scale_y = input_height / (float)src.rows;
+    float scale = std::min(scale_x, scale_y);
+    float i2d[6];
+    float d2i[6];
+    /*
+        M = [
+           scale,    0,     -scale * from.width * 0.5 + to.width * 0.5
+           0,     scale,    -scale * from.height * 0.5 + to.height * 0.5
+           0,        0,                     1
+        ]
+    */
+    i2d[0] = scale;
+    i2d[1] = 0;
+    i2d[2] = (-scale * src.cols + input_width + scale - 1) * 0.5;
+    i2d[3] = 0;
+    i2d[4] = scale;
+    i2d[5] = (-scale * src.rows + input_height + scale - 1) * 0.5;
+    cv::Mat m2x3_i2d(2, 3, CV_32F, i2d); // image to dst(network), 2x3 matrix
+    cv::Mat m2x3_d2i(2, 3, CV_32F, d2i); // dst to image, 2x3 matrix
+    // 获得逆矩阵
+    cv::invertAffineTransform(m2x3_i2d, m2x3_d2i);
+
+    // 对图像做平移缩放旋转变换,可逆
+
+    cv::cuda::GpuMat g_m2x3_i2d(m2x3_i2d);
+
+    cv::cuda::GpuMat g_src;
+    g_src.upload(src);
+    cv::cuda::GpuMat g_warpt_image(input_height, input_width, CV_8UC3);
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    cv::cuda::warpAffine(g_src, g_warpt_image, m2x3_i2d, g_warpt_image.size());
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    printf("cpu warp affine time %ld ms\n", timestamp2 - timestamp1);
+    cv::cuda::HostMem warpt_image(input_height, input_width, CV_8UC3);
+    g_warpt_image.download(warpt_image);
 
     return warpt_image;
 }
@@ -161,19 +229,16 @@ int main()
     // checkRuntime(cudaGetDeviceCount(&device_count));
 
     cv::Mat image = cv::imread("cat.jpg");
-
-    auto systemtime = std::chrono::system_clock::now();
-    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
-    cv::Mat output_cpu = warp_affine_cpu(image);
-
-    systemtime = std::chrono::system_clock::now();
-    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
-    printf("cpu warp affine time %ld ms\n", timestamp2 - timestamp1);
+    cv::cuda::registerPageLocked(image); // 按大小分配锁页内存
+    auto output_cpu = warp_affine_cpu(image);
 
     cv::imwrite("output_cpu.jpg", output_cpu);
+
     auto output = warpaffine_to_center_align(image, cv::Size(640, 640));
 
     cv::imwrite("output.jpg", output);
     printf("Done. save to output.jpg\n");
+
+    cv::cuda::unregisterPageLocked(image);
     return 0;
 }

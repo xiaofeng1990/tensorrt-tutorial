@@ -206,7 +206,7 @@ void warp_affine_bilinear(
     uint8_t *dst, int dst_line_size, int dst_width, int dst_height,
     uint8_t fill_value)
 {
-    dim3 block_size(32, 32); // blocksize最大就是1024，这里用2d来看更好理解
+    dim3 block_size(32, 32); // blocksize 最大就是1024，这里用2d来看更好理解
     dim3 grid_size((dst_width + 31) / 32, (dst_height + 31) / 32);
     AffineMatrix affine;
     affine.compute(Size(src_width, src_height), Size(dst_width, dst_height));
