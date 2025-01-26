@@ -3,7 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <stdio.h>
 #include <opencv2/cudawarping.hpp>
-#include <opencv2/core/cuda.hpp>
+#include <opencv2/cudaimgproc.hpp>
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
 
 bool __check_cuda_runtime(cudaError_t code, const char *op, const char *file, int line)
@@ -85,7 +85,7 @@ cv::cuda::HostMem warpaffine_to_center_align(cv::Mat &image, const cv::Size &siz
     checkRuntime(cudaMalloc(&psrc_device, src_size));
     checkRuntime(cudaMalloc(&pdst_device, dst_size));
 
-    // memcpy(psrc_host, image.data, src_size);
+    memcpy(psrc_host, image.data, src_size);
 
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
@@ -202,14 +202,20 @@ cv::cuda::HostMem warp_affine_opencv_gpu(cv::Mat &src)
 
     // 对图像做平移缩放旋转变换,可逆
 
-    cv::cuda::GpuMat g_m2x3_i2d(m2x3_i2d);
+    cv::cuda::setBufferPoolUsage(true);                                        // Tell OpenCV that we are going to utilize BufferPool
+    cv::cuda::setBufferPoolConfig(cv::cuda::getDevice(), 1024 * 1024 * 64, 2); // Allocate 64 MB, 2 stacks (default is 10 MB, 5 stacks)
 
-    cv::cuda::GpuMat g_src;
-    g_src.upload(src);
-    cv::cuda::GpuMat g_warpt_image(input_height, input_width, CV_8UC3);
+    cv::cuda::Stream stream1, stream2; // Each stream uses 1 stack
+    cv::cuda::BufferPool pool1(stream1);
+
+    cv::cuda::GpuMat g_src = pool1.getBuffer(src.size(), CV_8UC3); // 16MB
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
-    cv::cuda::warpAffine(g_src, g_warpt_image, m2x3_i2d, g_warpt_image.size());
+
+    g_src.upload(src);
+    cv::cuda::GpuMat g_warpt_image = pool1.getBuffer(input_height, input_width, CV_8UC3);
+
+    cv::cuda::warpAffine(g_src, g_warpt_image, m2x3_i2d, g_warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar::all(114), stream1);
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
     printf("cpu warp affine time %ld ms\n", timestamp2 - timestamp1);
@@ -229,7 +235,17 @@ int main()
     // checkRuntime(cudaGetDeviceCount(&device_count));
 
     cv::Mat image = cv::imread("cat.jpg");
+
+    // cv::cuda::GpuMat gpu_mat;
+
+    // gpu_mat.upload(image); // 确保 cpu_mat 是有效的
+
+    // cv::Mat warpt_image(1024, 1024, CV_8UC3);
+
+    cv::cuda::HostMem host_mem(image);
+    cv::cuda::setBufferPoolUsage(true);
     cv::cuda::registerPageLocked(image); // 按大小分配锁页内存
+
     auto output_cpu = warp_affine_cpu(image);
 
     cv::imwrite("output_cpu.jpg", output_cpu);
