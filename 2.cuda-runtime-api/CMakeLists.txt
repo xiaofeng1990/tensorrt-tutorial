@@ -40,7 +40,8 @@ else()
 endif()
 
 # find_package(OpenCV  REQUIRED)
-set(OpenCV_DIR /home/wxf/workspace/opencv4.1/opencv411_aarch64_gpu_install/lib/cmake/opencv4)
+
+set(OpenCV_DIR /home/xintent/workspace/wxf/opencv4.8/opencv480_aarch64_gpu_install/lib/cmake/opencv4)
 find_package(OpenCV PATHS ${OpenCV_DIR} NO_DEFAULT REQUIRED)
 
 add_definitions(-DHAVE_CUDA)

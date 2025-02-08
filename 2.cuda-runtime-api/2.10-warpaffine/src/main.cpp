@@ -23,6 +23,10 @@ void warp_affine_bilinear( // 声明
     uint8_t *dst, int dst_line_size, int dst_width, int dst_height,
     uint8_t fill_value);
 
+void warp_affine_bilinear_batch(
+    uint8_t *src, int src_line_size, int src_frame_size, int src_width, int src_height,
+    uint8_t *dst, int dst_line_size, int dst_frame_size, int dst_width, int dst_height,
+    uint8_t batch_size, uint8_t fill_value);
 #if 0
 cv::Mat warpaffine_to_center_align(const cv::Mat &image, const cv::Size &size)
 {
@@ -85,7 +89,7 @@ cv::cuda::HostMem warpaffine_to_center_align(cv::Mat &image, const cv::Size &siz
     checkRuntime(cudaMalloc(&psrc_device, src_size));
     checkRuntime(cudaMalloc(&pdst_device, dst_size));
 
-    memcpy(psrc_host, image.data, src_size);
+    // memcpy(psrc_host, image.data, src_size);
 
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
@@ -114,6 +118,62 @@ cv::cuda::HostMem warpaffine_to_center_align(cv::Mat &image, const cv::Size &siz
     return output;
 }
 #endif
+
+int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, const cv::Size &size)
+{
+    size_t count = image_files.size();
+
+    size_t src_width = 1280;
+    size_t src_height = 720;
+    uint8_t *psrc_device = nullptr;
+    uint8_t *pdst_device = nullptr;
+    uint8_t *pdst_host = nullptr;
+    uint8_t *psrc_host = nullptr;
+    size_t src_size = src_width * src_height * 3 * count;
+    size_t src_fream_size = src_width * src_height * 3;
+    size_t dst_size = size.width * size.height * 3 * count;
+    size_t dst_fream_size = size.width * size.height;
+
+    checkRuntime(cudaMallocHost(&psrc_host, src_size));
+    checkRuntime(cudaMallocHost(&pdst_host, dst_size));
+
+    checkRuntime(cudaMalloc(&psrc_device, src_size));
+    checkRuntime(cudaMalloc(&pdst_device, dst_size));
+
+    uint8_t *psrc_host_index = psrc_host;
+    for (size_t i = 0; i < count; i++)
+    {
+        std::cout << image_files[i] << std::endl;
+        cv::Mat image = cv::imread(image_files[i]);
+        // cv::cuda::registerPageLocked(image);
+        psrc_host_index = psrc_host + src_fream_size * i;
+        memcpy(psrc_host_index, image.data, src_fream_size);
+    }
+    checkRuntime(cudaMemcpy(psrc_device, psrc_host, src_size, cudaMemcpyHostToDevice));
+
+    warp_affine_bilinear_batch(
+        psrc_device, src_width * 3, src_width * src_height * 3, src_width, src_height,
+        pdst_device, size.width * 3, size.width * size.height * 3, size.width, size.height, count, 114);
+
+    checkRuntime(cudaDeviceSynchronize());
+    checkRuntime(cudaMemcpy(pdst_host, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
+    uint8_t *dst_index = pdst_host;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        dst_index = pdst_host + dst_fream_size * i;
+        cv::Mat output = cv::Mat(size.height, size.width, CV_8UC3, (unsigned *)dst_index);
+        std::string file_name = "output_" + std::to_string(i) + ".jpg";
+        std::cout << file_name << std::endl;
+        cv::imwrite(file_name, output);
+    }
+
+    checkRuntime(cudaPeekAtLastError());
+
+    checkRuntime(cudaFree(psrc_device));
+    checkRuntime(cudaFree(pdst_device));
+    return 0;
+}
 
 cv::Mat warp_affine_cpu(const cv::Mat &src)
 {
@@ -147,18 +207,6 @@ cv::Mat warp_affine_cpu(const cv::Mat &src)
 
     cv::Mat warpt_image(input_height, input_width, CV_8UC3);
     // 对图像做平移缩放旋转变换,可逆
-
-    // cv::cuda::GpuMat g_m2x3_i2d(m2x3_i2d);
-
-    // cv::cuda::GpuMat g_src(src);
-    // cv::cuda::GpuMat g_warpt_image(input_height, input_width, CV_8UC3);
-    // cv::warpAffine(src, warpt_image, m2x3_i2d, warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
-    //    cv::Scalar::all(114));
-    // cv::cuda::warpAffine(g_src, g_warpt_image, m2x3_i2d, g_warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
-    //                      cv::Scalar::all(114));
-    // cv::Mat warpt_image;
-    // g_warpt_image.download(warpt_image);
-
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
     cv::warpAffine(src, warpt_image, m2x3_i2d, warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
@@ -225,36 +273,43 @@ cv::cuda::HostMem warp_affine_opencv_gpu(cv::Mat &src)
     return warpt_image;
 }
 
+// int main()
+// {
+//     /*
+//     若有疑问，可点击抖音短视频辅助讲解(建议1.5倍速观看)
+//         https://v.douyin.com/NhMrb2A/
+//      */
+//     // int device_count = 1;
+//     // checkRuntime(cudaGetDeviceCount(&device_count));
+
+//     cv::Mat image = cv::imread("cat.jpg");
+
+//     cv::cuda::registerPageLocked(image); // 按大小分配锁页内存
+
+//     auto output_cpu = warp_affine_cpu(image);
+
+//     cv::imwrite("output_cpu.jpg", output_cpu);
+
+//     auto output = warpaffine_to_center_align(image, cv::Size(640, 640));
+
+//     cv::imwrite("output.jpg", output);
+//     printf("Done. save to output.jpg\n");
+
+//     cv::cuda::unregisterPageLocked(image);
+//     return 0;
+// }
+
 int main()
 {
-    /*
-    若有疑问，可点击抖音短视频辅助讲解(建议1.5倍速观看)
-        https://v.douyin.com/NhMrb2A/
-     */
-    // int device_count = 1;
-    // checkRuntime(cudaGetDeviceCount(&device_count));
 
-    cv::Mat image = cv::imread("cat.jpg");
-
-    // cv::cuda::GpuMat gpu_mat;
-
-    // gpu_mat.upload(image); // 确保 cpu_mat 是有效的
-
-    // cv::Mat warpt_image(1024, 1024, CV_8UC3);
-
-    cv::cuda::HostMem host_mem(image);
-    cv::cuda::setBufferPoolUsage(true);
-    cv::cuda::registerPageLocked(image); // 按大小分配锁页内存
-
-    auto output_cpu = warp_affine_cpu(image);
-
-    cv::imwrite("output_cpu.jpg", output_cpu);
-
-    auto output = warpaffine_to_center_align(image, cv::Size(640, 640));
-
-    cv::imwrite("output.jpg", output);
-    printf("Done. save to output.jpg\n");
-
-    cv::cuda::unregisterPageLocked(image);
+    // ./test_images/1.jpg
+    std::vector<std::string> image_files;
+    size_t count = 2;
+    for (size_t i = 1; i <= count; i++)
+    {
+        std::string image = "./test_images/" + std::to_string(i) + ".jpg";
+        image_files.push_back(image);
+    }
+    warpaffine_to_center_align_batch(image_files, cv::Size(640, 640));
     return 0;
 }

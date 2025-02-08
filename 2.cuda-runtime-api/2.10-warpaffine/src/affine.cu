@@ -1,6 +1,6 @@
 
 #include <cuda_runtime.h>
-
+#include <stdio.h>
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define num_threads 512
 
@@ -201,6 +201,90 @@ __global__ void warp_affine_bilinear_kernel(
     pdst[2] = c2;
 }
 
+__global__ void warp_affine_bilinear_kernel_batch(
+    uint8_t *src, int src_line_size, int src_fream_size, int src_width, int src_height,
+    uint8_t *dst, int dst_line_size, int dst_fream_size, int dst_width, int dst_height,
+    uint8_t batch_size, uint8_t fill_value, AffineMatrix matrix)
+{
+    int dx = blockDim.x * blockIdx.x + threadIdx.x;
+    int dy = blockDim.y * blockIdx.y + threadIdx.y;
+    int dz = threadIdx.z;
+    int index = (((((blockIdx.z * gridDim.y) + blockIdx.y) * gridDim.x + blockIdx.x) * blockDim.z + threadIdx.z) * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x;
+    // printf("threadIdx.z = %d, blockIdx.z=%d, blockDim.z=%d\n", threadIdx.z, blockIdx.z, blockDim.z);
+    // if (dz == 0)
+    //     printf("dz %d \n", dz);
+    if (dx >= dst_width || dy >= dst_height || dz >= batch_size)
+        return;
+
+    float c0 = fill_value, c1 = fill_value, c2 = fill_value;
+    float src_x = 0;
+    float src_y = 0;
+    affine_project(matrix.d2i, dx, dy, &src_x, &src_y);
+
+    uint8_t *src_index = src + src_fream_size * dz;
+    // uint8_t *src_index = src;
+    // uint8_t *dst_index = dst + dst_fream_size * dz;
+    // uint8_t *dst_index = dst;
+    // uint8_t *src_index = src + index;
+    // uint8_t *src_index = src + src_fream_size * dz;
+    uint8_t *dst_index = dst + dst_fream_size;
+    /*
+    建议先阅读代码，若有疑问，可点击抖音短视频进行辅助讲解(建议1.5倍速观看)
+        - 双线性理论讲解：https://v.douyin.com/NhrH2tb/
+        - 代码代码：https://v.douyin.com/NhrBqpc/
+    */
+    if (src_x < -1 || src_x >= src_width || src_y < -1 || src_y >= src_height)
+    {
+        // out of range
+        // src_x < -1时，其高位high_x < 0，超出范围
+        // src_x >= -1时，其高位high_x >= 0，存在取值
+    }
+    else
+    {
+        int y_low = floorf(src_y);
+        int x_low = floorf(src_x);
+        int y_high = y_low + 1;
+        int x_high = x_low + 1;
+
+        uint8_t const_values[] = {fill_value, fill_value, fill_value};
+        float ly = src_y - y_low;
+        float lx = src_x - x_low;
+        float hy = 1 - ly;
+        float hx = 1 - lx;
+        float w1 = hy * hx, w2 = hy * lx, w3 = ly * hx, w4 = ly * lx;
+        uint8_t *v1 = const_values;
+        uint8_t *v2 = const_values;
+        uint8_t *v3 = const_values;
+        uint8_t *v4 = const_values;
+        if (y_low >= 0)
+        {
+            if (x_low >= 0)
+                v1 = src_index + y_low * src_line_size + x_low * 3;
+
+            if (x_high < src_width)
+                v2 = src_index + y_low * src_line_size + x_high * 3;
+        }
+
+        if (y_high < src_height)
+        {
+            if (x_low >= 0)
+                v3 = src_index + y_high * src_line_size + x_low * 3;
+
+            if (x_high < src_width)
+                v4 = src_index + y_high * src_line_size + x_high * 3;
+        }
+
+        c0 = floorf(w1 * v1[0] + w2 * v2[0] + w3 * v3[0] + w4 * v4[0] + 0.5f);
+        c1 = floorf(w1 * v1[1] + w2 * v2[1] + w3 * v3[1] + w4 * v4[1] + 0.5f);
+        c2 = floorf(w1 * v1[2] + w2 * v2[2] + w3 * v3[2] + w4 * v4[2] + 0.5f);
+    }
+    uint8_t *pdst = dst_index + dy * dst_line_size + dx * 3;
+    // uint8_t *pdst = dst + index;
+    pdst[0] = c0;
+    pdst[1] = c1;
+    pdst[2] = c2;
+}
+
 void warp_affine_bilinear(
     uint8_t *src, int src_line_size, int src_width, int src_height,
     uint8_t *dst, int dst_line_size, int dst_width, int dst_height,
@@ -214,5 +298,23 @@ void warp_affine_bilinear(
     warp_affine_bilinear_kernel<<<grid_size, block_size, 0, nullptr>>>(
         src, src_line_size, src_width, src_height,
         dst, dst_line_size, dst_width, dst_height,
+        fill_value, affine);
+}
+
+void warp_affine_bilinear_batch(
+    uint8_t *src, int src_line_size, int src_frame_size, int src_width, int src_height,
+    uint8_t *dst, int dst_line_size, int dst_frame_size, int dst_width, int dst_height,
+    uint8_t batch_size, uint8_t fill_value)
+{
+    dim3 block_size(32, 32); // blocksize 最大就是1024，这里用2d来看更好理解
+    dim3 grid_size((dst_width + 31) / 32, (dst_height + 31) / 32, batch_size);
+    printf("grid size = %d * %d * %d \n", grid_size.x, grid_size.y, grid_size.z);
+    printf("block size = %d * %d * %d \n", block_size.x, block_size.y, block_size.z);
+    AffineMatrix affine;
+    affine.compute(Size(src_width, src_height), Size(dst_width, dst_height));
+
+    warp_affine_bilinear_kernel_batch<<<grid_size, block_size, 0, nullptr>>>(
+        src, src_line_size, src_frame_size, src_width, src_height,
+        dst, dst_line_size, dst_frame_size, dst_width, dst_height, batch_size,
         fill_value, affine);
 }

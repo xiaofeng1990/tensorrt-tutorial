@@ -25,7 +25,7 @@ int main()
 {
     float *parray_host = nullptr;
     float *parray_device = nullptr;
-    int narray = 20;
+    int narray = 32;
     int array_bytes = sizeof(float) * narray;
     printf("array_bytes  = %d \n", array_bytes);
     // host memory

@@ -7,6 +7,7 @@
                 "/usr/local/cuda-11.4/targets/aarch64-linux/include",
                 "/usr/local/cuda-10.2/targets/aarch64-linux/include",
                 "/home/wxf/workspace/opencv4.5/opencv452_aarch64_gpu_install/include/opencv4",
+                "/home/xintent/workspace/wxf/opencv4.8/opencv480_aarch64_gpu_install/include/opencv4",
                 "/usr/include/opencv4"
             ],
             "defines": [],
