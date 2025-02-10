@@ -119,6 +119,42 @@ cv::cuda::HostMem warpaffine_to_center_align(cv::Mat &image, const cv::Size &siz
 }
 #endif
 
+uint8_t **cuda_malloc_2d_host(uint8_t ***arr, const int m, const int n)
+{
+    cudaMallocHost(arr, m);
+    if (!arr)
+    {
+        return nullptr;
+    }
+    for (int i = 0; i < m; i++)
+    {
+        cudaMallocHost(*arr + i, n);
+        if (!(*arr + i))
+        {
+            return nullptr;
+        }
+    }
+    return *arr;
+}
+
+uint8_t **cuda_malloc_2d_device(uint8_t ***arr, const int m, const int n)
+{
+    cudaMalloc(arr, m);
+    if (!arr)
+    {
+        return nullptr;
+    }
+    for (int i = 0; i < m; i++)
+    {
+        cudaMalloc(*arr + i, n);
+        if (!(*arr + i))
+        {
+            return nullptr;
+        }
+    }
+    return *arr;
+}
+
 int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, const cv::Size &size)
 {
     size_t count = image_files.size();
@@ -132,7 +168,7 @@ int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, cons
     size_t src_size = src_width * src_height * 3 * count;
     size_t src_fream_size = src_width * src_height * 3;
     size_t dst_size = size.width * size.height * 3 * count;
-    size_t dst_fream_size = size.width * size.height;
+    size_t dst_fream_size = size.width * size.height * 3;
 
     checkRuntime(cudaMallocHost(&psrc_host, src_size));
     checkRuntime(cudaMallocHost(&pdst_host, dst_size));
@@ -141,14 +177,17 @@ int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, cons
     checkRuntime(cudaMalloc(&pdst_device, dst_size));
 
     uint8_t *psrc_host_index = psrc_host;
+
     for (size_t i = 0; i < count; i++)
     {
-        std::cout << image_files[i] << std::endl;
+        // std::cout << image_files[i] << std::endl;
         cv::Mat image = cv::imread(image_files[i]);
         // cv::cuda::registerPageLocked(image);
         psrc_host_index = psrc_host + src_fream_size * i;
         memcpy(psrc_host_index, image.data, src_fream_size);
     }
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
     checkRuntime(cudaMemcpy(psrc_device, psrc_host, src_size, cudaMemcpyHostToDevice));
 
     warp_affine_bilinear_batch(
@@ -157,6 +196,10 @@ int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, cons
 
     checkRuntime(cudaDeviceSynchronize());
     checkRuntime(cudaMemcpy(pdst_host, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    printf("gpu batch warp affine %d image time %ld ms\n", count, timestamp2 - timestamp1);
+
     uint8_t *dst_index = pdst_host;
 
     for (size_t i = 0; i < count; i++)
@@ -164,7 +207,7 @@ int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, cons
         dst_index = pdst_host + dst_fream_size * i;
         cv::Mat output = cv::Mat(size.height, size.width, CV_8UC3, (unsigned *)dst_index);
         std::string file_name = "output_" + std::to_string(i) + ".jpg";
-        std::cout << file_name << std::endl;
+        // std::cout << file_name << std::endl;
         cv::imwrite(file_name, output);
     }
 
@@ -172,6 +215,8 @@ int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, cons
 
     checkRuntime(cudaFree(psrc_device));
     checkRuntime(cudaFree(pdst_device));
+    checkRuntime(cudaFreeHost(pdst_host));
+    checkRuntime(cudaFreeHost(psrc_host));
     return 0;
 }
 
@@ -213,7 +258,7 @@ cv::Mat warp_affine_cpu(const cv::Mat &src)
                    cv::Scalar::all(114));
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
-    printf("cpu warp affine time %ld ms\n", timestamp2 - timestamp1);
+    printf("cpu warp affine 1 image time %ld ms\n", timestamp2 - timestamp1);
 
     return warpt_image;
 }
@@ -273,43 +318,38 @@ cv::cuda::HostMem warp_affine_opencv_gpu(cv::Mat &src)
     return warpt_image;
 }
 
-// int main()
-// {
-//     /*
-//     若有疑问，可点击抖音短视频辅助讲解(建议1.5倍速观看)
-//         https://v.douyin.com/NhMrb2A/
-//      */
-//     // int device_count = 1;
-//     // checkRuntime(cudaGetDeviceCount(&device_count));
-
-//     cv::Mat image = cv::imread("cat.jpg");
-
-//     cv::cuda::registerPageLocked(image); // 按大小分配锁页内存
-
-//     auto output_cpu = warp_affine_cpu(image);
-
-//     cv::imwrite("output_cpu.jpg", output_cpu);
-
-//     auto output = warpaffine_to_center_align(image, cv::Size(640, 640));
-
-//     cv::imwrite("output.jpg", output);
-//     printf("Done. save to output.jpg\n");
-
-//     cv::cuda::unregisterPageLocked(image);
-//     return 0;
-// }
-
 int main()
 {
+    /*
+    若有疑问，可点击抖音短视频辅助讲解(建议1.5倍速观看)
+        https://v.douyin.com/NhMrb2A/
+     */
+    // int device_count = 1;
+    // checkRuntime(cudaGetDeviceCount(&device_count));
 
-    // ./test_images/1.jpg
+    cv::Mat image = cv::imread("cat.jpg");
+
+    // cv::cuda::registerPageLocked(image); // 按大小分配锁页内存
+
+    auto output_cpu = warp_affine_cpu(image);
+
+    cv::imwrite("output_cpu.jpg", output_cpu);
+
+    // auto output = warpaffine_to_center_align(image, cv::Size(640, 640));
+
+    // cv::imwrite("output.jpg", output);
+
     std::vector<std::string> image_files;
-    size_t count = 2;
+    size_t count = 12;
     for (size_t i = 1; i <= count; i++)
     {
         std::string image = "./test_images/" + std::to_string(i) + ".jpg";
         image_files.push_back(image);
     }
     warpaffine_to_center_align_batch(image_files, cv::Size(640, 640));
+
+    printf("Done. save to output.jpg\n");
+
+    // cv::cuda::unregisterPageLocked(image);
     return 0;
 }

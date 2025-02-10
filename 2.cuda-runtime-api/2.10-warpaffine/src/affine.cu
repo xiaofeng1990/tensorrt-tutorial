@@ -208,7 +208,7 @@ __global__ void warp_affine_bilinear_kernel_batch(
 {
     int dx = blockDim.x * blockIdx.x + threadIdx.x;
     int dy = blockDim.y * blockIdx.y + threadIdx.y;
-    int dz = threadIdx.z;
+    int dz = blockDim.z * blockIdx.z + threadIdx.z;
     int index = (((((blockIdx.z * gridDim.y) + blockIdx.y) * gridDim.x + blockIdx.x) * blockDim.z + threadIdx.z) * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x;
     // printf("threadIdx.z = %d, blockIdx.z=%d, blockDim.z=%d\n", threadIdx.z, blockIdx.z, blockDim.z);
     // if (dz == 0)
@@ -222,12 +222,8 @@ __global__ void warp_affine_bilinear_kernel_batch(
     affine_project(matrix.d2i, dx, dy, &src_x, &src_y);
 
     uint8_t *src_index = src + src_fream_size * dz;
-    // uint8_t *src_index = src;
-    // uint8_t *dst_index = dst + dst_fream_size * dz;
-    // uint8_t *dst_index = dst;
-    // uint8_t *src_index = src + index;
-    // uint8_t *src_index = src + src_fream_size * dz;
-    uint8_t *dst_index = dst + dst_fream_size;
+    uint8_t *dst_index = dst + dst_fream_size * dz;
+
     /*
     建议先阅读代码，若有疑问，可点击抖音短视频进行辅助讲解(建议1.5倍速观看)
         - 双线性理论讲解：https://v.douyin.com/NhrH2tb/
@@ -279,7 +275,6 @@ __global__ void warp_affine_bilinear_kernel_batch(
         c2 = floorf(w1 * v1[2] + w2 * v2[2] + w3 * v3[2] + w4 * v4[2] + 0.5f);
     }
     uint8_t *pdst = dst_index + dy * dst_line_size + dx * 3;
-    // uint8_t *pdst = dst + index;
     pdst[0] = c0;
     pdst[1] = c1;
     pdst[2] = c2;

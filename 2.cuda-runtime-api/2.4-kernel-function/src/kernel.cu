@@ -32,8 +32,7 @@ __global__ void test_print_kernel(const float *pdata, int ndata)
     // printf("Element[%d] = %f, threadIdx.x = %d, blockIdx.x=%d, blockDim.x=%d\n", idx, pdata[idx], threadIdx.x, blockIdx.x, blockDim.x);
     int index = (((((blockIdx.z * gridDim.y) + blockIdx.y) * gridDim.x + blockIdx.x) * blockDim.z + threadIdx.z) * blockDim.y + threadIdx.y) * blockDim.x + threadIdx.x;
     printf("Element[%d] = %f, \n", index, pdata[index]);
-
-    // printf("x = %d, y=%d, z=%d\n", idx, idy, idz);
+    printf("x = %d, y=%d, z=%d\n", idx, idy, idz);
 }
 
 void test_print(const float *pdata, int ndata)
@@ -46,7 +45,7 @@ void test_print(const float *pdata, int ndata)
     // blockDim(1024, 64, 64)  blockDim.x * blockDim.y * blockDim.z<=1024
     //  <<< gridDim, blockDim,  bytes_of_shared_memory, stream>>>
     // gridDim 定义线程格尺寸里面有多少线程快 blockDim定义线程快里面有多少线程
-    test_print_kernel<<<dim3(2, 2), dim3(2, 2, 2), 0, nullptr>>>(pdata, ndata);
+    test_print_kernel<<<dim3(2, 2, 2), dim3(2, 2), 0, nullptr>>>(pdata, ndata);
     // 在核函数执行结束后，通过 cudaPeekAtLastError 判断是否执行错误
     //  cudaPeekAtLastError 和 cudaGetLastError 都可以获取错误代码
     //  cudaGetLastError 是获取错误代码后并清楚，也就是在执行一次 cudaGetLastError 获取到的会是 success
