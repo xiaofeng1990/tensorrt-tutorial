@@ -17,6 +17,7 @@ static __global__ void decode_kernel(float *predict, int num_bboxes, int num_cla
     if (objectness < confidence_threshold)
         return;
 
+    // cx, cy, width, height, objness, classification*80
     float *class_confidence = pitem + 5;
     float confidence = *class_confidence++;
     int label = 0;
