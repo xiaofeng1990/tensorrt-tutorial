@@ -75,6 +75,8 @@
         "valarray": "cpp",
         "variant": "cpp",
         "__nullptr": "cpp",
-        "__bit_reference": "cpp"
+        "__bit_reference": "cpp",
+        "__node_handle": "cpp",
+        "__config": "cpp"
     }
 }

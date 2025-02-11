@@ -66,5 +66,4 @@ add_subdirectory(2.6-vector-add)
 add_subdirectory(2.7-shared-memory)
 add_subdirectory(2.8-reduce-sum)
 add_subdirectory(2.10-warpaffine)
-
-# add_subdirectory(2.12-yolov5-postprocess)
+add_subdirectory(2.12-yolov5-postprocess)
