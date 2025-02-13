@@ -6,8 +6,8 @@
                 "${workspaceFolder}/**",
                 "/usr/local/cuda-11.4/targets/aarch64-linux/include",
                 "/usr/local/cuda-10.2/targets/aarch64-linux/include",
-                "/opt/opencv480_aarch64_gpu_install/include/opencv4",
-                "${workspaceFolder}/2.cuda-runtime-api/2.12-yolov5-postprocess/src"
+                "${workspaceFolder}/2.cuda-runtime-api/2.12-yolov5-postprocess/src",
+                "/usr/include/opencv4"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
