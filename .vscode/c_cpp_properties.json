@@ -4,8 +4,7 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/usr/local/cuda-11.4/targets/aarch64-linux/include",
-                "/usr/local/cuda-10.2/targets/aarch64-linux/include",
+                "/usr/local/cuda/targets/aarch64-linux/include",
                 "${workspaceFolder}/2.cuda-runtime-api/2.12-yolov5-postprocess/src",
                 "/usr/include/opencv4"
             ],
