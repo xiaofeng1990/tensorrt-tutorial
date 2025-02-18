@@ -180,7 +180,7 @@ std::string root_path = "./";
 
 bool build_model()
 {
-    std::string engine_file = root_path + "yolov5s.engine";
+    std::string engine_file = root_path + "yolo11n.engine";
     if (exists(engine_file))
     {
         printf("yolov5s.engine has exists.\n");
@@ -193,7 +193,7 @@ bool build_model()
     auto network = make_shared(builder->createNetworkV2(1));
 
     auto parser = make_shared(nvonnxparser::createParser(*network, logger));
-    std::string onnx_file = root_path + "yolov5s.onnx";
+    std::string onnx_file = root_path + "yolo11n_dynamic.onnx";
     if (!parser->parseFromFile(onnx_file.c_str(), 1))
     {
         printf("Failed to parse yolov5s.onnx\n");
@@ -205,7 +205,7 @@ bool build_model()
     int maxBatchSize = 5;
     int minBatchSize = 1;
     printf("Workspace Size = %.2f MB\n", (1 << 28) / 1024.0f / 1024.0f);
-    config->setMaxWorkspaceSize(1 << 28);
+    config->setMaxWorkspaceSize(1 << 48);
     auto profile = builder->createOptimizationProfile();
     auto input_tensor = network->getInput(0);
     std::cout << "input numbers: " << network->getNbInputs() << std::endl;
@@ -299,7 +299,7 @@ void inference()
 {
     TRTLogger logger;
 
-    std::string engine_file = root_path + "yolov5s.engine";
+    std::string engine_file = root_path + "yolo11n.engine";
     auto engine_data = load_file(engine_file);
     auto runtime = make_shared(nvinfer1::createInferRuntime(logger));
     auto engine = make_shared(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
@@ -336,7 +336,7 @@ void inference()
     checkRuntime(cudaMallocHost(&input_data_host, input_numel * sizeof(float)));
     checkRuntime(cudaMalloc(&input_data_device, input_numel * sizeof(float)));
 
-    std::string image_file = root_path + "car.jpg";
+    std::string image_file = root_path + "bus.jpg";
     auto image = cv::imread(image_file);
     // 通过双线性插值对图像进行resize
     float scale_x = input_width / (float)image.cols;
@@ -410,20 +410,17 @@ void inference()
     checkRuntime(cudaStreamSynchronize(stream));
 
     // decode box：从不同尺度下的预测狂还原到原输入图上(包括:预测框，类被概率，置信度）
+    // yolov11 has an output of shape (batchSize,8400, 84) ( box[x,y,w,h] + Num classes)
     std::vector<std::vector<float>> bboxes;
     float confidence_threshold = 0.25;
-    float nms_threshold = 0.5;
+    float nms_threshold = 0.45;
     for (int i = 0; i < output_numbox; ++i)
     {
         float *ptr = output_data_host + i * output_numprob;
-        float objness = ptr[4];
-        if (objness < confidence_threshold)
-            continue;
+        float *pclass = ptr + 4;
+        int class_id = std::max_element(pclass, pclass + num_classes) - pclass;
 
-        float *pclass = ptr + 5;
-        int label = std::max_element(pclass, pclass + num_classes) - pclass;
-        float prob = pclass[label];
-        float confidence = prob * objness;
+        float confidence = pclass[class_id];
         if (confidence < confidence_threshold)
             continue;
 
@@ -444,7 +441,7 @@ void inference()
         float image_base_right = d2i[0] * right + d2i[2];
         float image_base_top = d2i[0] * top + d2i[5];
         float image_base_bottom = d2i[0] * bottom + d2i[5];
-        bboxes.push_back({image_base_left, image_base_top, image_base_right, image_base_bottom, (float)label, confidence});
+        bboxes.push_back({image_base_left, image_base_top, image_base_right, image_base_bottom, (float)class_id, confidence});
     }
     printf("decoded bboxes.size = %d\n", bboxes.size());
 
