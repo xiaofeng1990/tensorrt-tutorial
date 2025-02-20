@@ -54,6 +54,7 @@ endif()
 add_subdirectory(4.1.full-cnn-classifier)
 add_subdirectory(4.2.yolov5-detect)
 add_subdirectory(4.3.yolov11-detect)
+add_subdirectory(4.4.yolov11-seg)
 add_subdirectory(4.12.multithread)
 add_subdirectory(4.13.builder)
 
