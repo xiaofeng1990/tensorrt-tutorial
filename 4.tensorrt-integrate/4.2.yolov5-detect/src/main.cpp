@@ -330,6 +330,8 @@ void inference()
     printf("input_batch %d input_channel %d input_height %d input_width %d\n",
            input_batch, input_channel, input_height, input_width);
 
+    int vec_dim = engine->getBindingVectorizedDim(0);
+    std::cout << "input vector dim size  " << vec_dim << std::endl;
     int input_numel = input_batch * input_channel * input_height * input_width;
     float *input_data_host = nullptr;
     float *input_data_device = nullptr;

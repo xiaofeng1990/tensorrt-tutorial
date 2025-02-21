@@ -24,6 +24,19 @@
 #include <opencv2/opencv.hpp>
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
 
+struct Box
+{
+    float left;
+    float top;
+    float right;
+    float bottom;
+    float confidence;
+    int label;
+    std::vector<float> weight;
+
+    Box() = default;
+    Box(float left, float top, float right, float bottom, float confidence, int label) : left(left), top(top), right(right), bottom(bottom), confidence(confidence), label(label) {}
+};
 std::string join_dims(const std::vector<int> dims)
 {
     std::stringstream output;
@@ -190,14 +203,14 @@ std::shared_ptr<_T> make_shared(_T *ptr)
                                { p->destroy(); });
 }
 // std::string root_path = "../4.2.yolov5-detect/data/";
-std::string root_path = "./";
+std::string root_path = "/home/xintent/workspace/wxf/tensorrt-tutorial/4.tensorrt-integrate/build/";
 
 bool build_model()
 {
     std::string engine_file = root_path + "yolo11n-seg_dynamic.engine";
     if (exists(engine_file))
     {
-        printf("yolov5s.engine has exists.\n");
+        printf("yolo11n-seg_dynamic.engine has exists.\n");
         return true;
     }
     TRTLogger logger;
@@ -322,6 +335,220 @@ std::vector<std::string> load_labels(const char *file)
     return lines;
 }
 
+cv::Mat warp_affine_cpu(const cv::Mat &src, float *d2i)
+{
+    // warpAffine
+    int input_channel = 3;
+    int input_height = 640;
+    int input_width = 640;
+
+    float scale_x = input_width / (float)src.cols;
+    float scale_y = input_height / (float)src.rows;
+    float scale = std::min(scale_x, scale_y);
+    float i2d[6];
+    /*
+        M = [
+           scale,    0,     -scale * from.width * 0.5 + to.width * 0.5
+           0,     scale,    -scale * from.height * 0.5 + to.height * 0.5
+           0,        0,                     1
+        ]
+    */
+    i2d[0] = scale;
+    i2d[1] = 0;
+    i2d[2] = (-scale * src.cols + input_width + scale - 1) * 0.5;
+    i2d[3] = 0;
+    i2d[4] = scale;
+    i2d[5] = (-scale * src.rows + input_height + scale - 1) * 0.5;
+    cv::Mat m2x3_i2d(2, 3, CV_32F, i2d); // image to dst(network), 2x3 matrix
+    cv::Mat m2x3_d2i(2, 3, CV_32F, d2i); // dst to image, 2x3 matrix
+    // 获得逆矩阵
+    cv::invertAffineTransform(m2x3_i2d, m2x3_d2i);
+
+    cv::Mat warpt_image(input_height, input_width, CV_8UC3);
+    // 对图像做平移缩放旋转变换,可逆
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    cv::warpAffine(src, warpt_image, m2x3_i2d, warpt_image.size(), cv::INTER_LINEAR, cv::BORDER_CONSTANT,
+                   cv::Scalar::all(114));
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
+    printf("cpu warp affine 1 image time %ld ms\n", timestamp2 - timestamp1);
+
+    return warpt_image;
+}
+float iou(const Box &a, const Box &b)
+{
+    float cross_left = std::max(a.left, b.left);
+    float cross_top = std::max(a.top, b.top);
+    float cross_right = std::min(a.right, b.right);
+    float cross_bottom = std::min(a.bottom, b.bottom);
+
+    float cross_area = std::max(0.0f, cross_right - cross_left) * std::max(0.0f, cross_bottom - cross_top);
+    float union_area = std::max(0.0f, a.right - a.left) * std::max(0.0f, a.bottom - a.top) +
+                       std::max(0.0f, b.right - b.left) * std::max(0.0f, b.bottom - b.top) - cross_area;
+    if (cross_top == 0 || union_area == 0)
+        return 0.0f;
+
+    return cross_area / union_area;
+}
+std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, float confidence_threshold = 0.25f, float nms_threshold = 0.45f)
+{
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+
+    // cx, cy, width, height, objness, classification*80
+    // 一行是85列
+    std::vector<Box> boxes;
+    int num_classes = clos - 36;
+
+    // 第一个循环，根据置信度挑选box
+    for (int i = 0; i < rows; i++)
+    {
+        // 获得每一行的首地址
+        float *pitem = predict + i * clos;
+
+        // 获取类别置信度的首地址
+        float *pclass = pitem + 4;
+        // std::max_element 返回从pclass到pclass+num_classes中最大值的地址，
+        // 减去 pclass 后就是索引
+        int class_id = std::max_element(pclass, pclass + num_classes) - pclass;
+        float confidence = pclass[class_id];
+        if (confidence < confidence_threshold)
+            continue;
+
+        // 中心点、宽、高
+        float cx = pitem[0];
+        float cy = pitem[1];
+        float width = pitem[2];
+        float height = pitem[3];
+
+        // 预测框
+        Box box;
+        box.left = cx - width * 0.5;
+        box.top = cy - height * 0.5;
+        box.right = cx + width * 0.5;
+        box.bottom = cy + height * 0.5;
+        box.confidence = confidence;
+        box.label = class_id;
+        // memcpy(box.weight, pitem + 84, 32 * sizeof(float));
+        std::vector<float> mask(pitem + 84, pitem + 84 + 32);
+        box.weight = mask;
+        // 对应图上的位置
+        // float image_base_left = d2i[0] * left + d2i[2];
+        // float image_base_right = d2i[0] * right + d2i[2];
+        // float image_base_top = d2i[0] * top + d2i[5];
+        // float image_base_bottom = d2i[0] * bottom + d2i[5];
+        // boxes.push_back({image_base_left, image_base_top, image_base_right, image_base_bottom, (float)class_id, confidence});
+        boxes.push_back(box);
+    }
+    // 对所有box根据置信度排序
+    std::sort(boxes.begin(), boxes.end(), [](Box &a, Box &b)
+              { return a.confidence > b.confidence; });
+    // 记录box是否被删除，被删除为true
+    std::vector<bool> remove_flags(boxes.size());
+    // 保存box
+    std::vector<Box> box_result;
+    box_result.reserve(boxes.size());
+
+    for (int i = 0; i < boxes.size(); i++)
+    {
+        if (remove_flags[i])
+            continue;
+        auto &ibox = boxes[i];
+        box_result.emplace_back(ibox);
+        for (int j = i + 1; j < boxes.size(); ++j)
+        {
+            if (remove_flags[j])
+                continue;
+            auto &jbox = boxes[j];
+            if (ibox.label == jbox.label)
+            {
+                if (iou(ibox, jbox) >= nms_threshold)
+                    remove_flags[j] = true;
+            }
+        }
+    }
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+
+    printf("cpu yolov5 postprocess %ld ns\n", timestamp2 - timestamp1);
+
+    return box_result;
+}
+
+void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
+{
+    // 1 x 32 x 160 x 160
+    std::vector<std::vector<float>> mask_list;
+    // float *head[mask_dim];
+    float *head[32];
+    // int mask_size = mask_h * mask_w;
+    int mask_size = 160 * 160;
+    for (size_t i = 0; i < mask_dim; i++)
+    {
+        head[i] = predict + i * mask_size;
+    }
+
+    for (auto const &box : boxes)
+    {
+        std::vector<float> mask;
+
+        for (size_t y = 0; y < 160; y++)
+        {
+            for (size_t x = 0; x < 160; x++)
+            {
+                int index = y * 160 + x;
+                float value = 0;
+                if ((x > box.left / 4 && x < box.right / 4) && (y > box.top / 4 && y < box.bottom / 4))
+                {
+
+                    for (size_t j = 0; j < mask_dim; j++)
+                    {
+                        value += box.weight[j] * head[j][index];
+                    }
+                }
+
+                if (value > 0.5)
+                {
+                    mask.push_back(255);
+                }
+                else
+                    mask.push_back(0);
+            }
+        }
+        mask_list.push_back(mask);
+    }
+
+    // for (auto const &box : boxes)
+    // {
+    //     std::vector<float> mask;
+
+    //     for (size_t i = 0; i < mask_size; i++)
+    //     {
+    //         float value = 0;
+
+    //         for (size_t j = 0; j < mask_dim; j++)
+    //         {
+    //             value += box.weight[j] * head[j][i];
+    //         }
+    //         // float alpha = (1.0f / (1.0f + exp(-value)));
+
+    //         mask.push_back(value);
+    //     }
+    //     mask_list.push_back(mask);
+    // }
+    std::cout << "mask_list size " << mask_list.size() << " mask_list[0] size " << mask_list[0].size() << std::endl;
+    for (size_t i = 0; i < mask_list.size(); i++)
+    {
+
+        cv::Mat mat = cv::Mat(160, 160, CV_8UC1, (unsigned *)mask_list[i].data());
+        cv::Mat output_mat;
+        cv::resize(mat, output_mat, cv::Size(640, 640));
+
+        std::string output_file = "mask_output_" + std::to_string(i) + "_.jpg";
+        cv::imwrite(output_file, output_mat);
+    }
+}
 void inference()
 {
     TRTLogger logger;
@@ -343,98 +570,119 @@ void inference()
     auto execution_context = make_shared(engine->createExecutionContext());
 
     int min_batch_size;
-
+    int opt_batch_size;
+    int max_batch_size;
+    std::string input_tensort_name;
+    std::vector<std::string> output_tensort_name_list;
+    int input_channel;
+    int input_height;
+    int input_width;
     for (int i = 0; i < engine->getNbBindings(); i++)
     {
         auto dims = engine->getBindingDimensions(i);
 
         if (engine->bindingIsInput(i))
         {
+            std::cout << "input binding name " << engine->getBindingName(i) << std::endl;
+            input_tensort_name = engine->getBindingName(i);
+
+            std::cout << "input binding index  " << engine->getBindingIndex(engine->getBindingName(i)) << std::endl;
             // 动态batch
             if (dims.d[0] <= 0)
             {
                 int32_t profiles_number = engine->getNbOptimizationProfiles();
                 auto dims = engine->getProfileDimensions(i, 0, nvinfer1::OptProfileSelector::kMIN);
                 min_batch_size = dims.d[0];
-                dims = engine_->getProfileDimensions(i, 0, nvinfer1::OptProfileSelector::kOPT);
-                opt_batch_size_ = dims.d[0];
-                dims = engine_->getProfileDimensions(i, 0, nvinfer1::OptProfileSelector::kMAX);
-                max_batch_size_ = dims.d[0];
+                std::cout << "min tensor dims " << dims_str(dims) << std::endl;
+                std::cout << "min_batch_size  " << min_batch_size << std::endl;
+                dims = engine->getProfileDimensions(i, 0, nvinfer1::OptProfileSelector::kOPT);
+                opt_batch_size = dims.d[0];
+                std::cout << "opt tensor dims " << dims_str(dims) << std::endl;
+                std::cout << "opt_batch_size  " << opt_batch_size << std::endl;
+                dims = engine->getProfileDimensions(i, 0, nvinfer1::OptProfileSelector::kMAX);
+                max_batch_size = dims.d[0];
+                std::cout << "max tensor dims " << dims_str(dims) << std::endl;
+                std::cout << "max_batch_size  " << max_batch_size << std::endl;
             }
             else
             {
-                min_batch_size_ = dims.d[0];
-                opt_batch_size_ = dims.d[0];
-                max_batch_size_ = dims.d[0];
+                min_batch_size = dims.d[0];
+                opt_batch_size = dims.d[0];
+                max_batch_size = dims.d[0];
             }
-            input_dims_ = dims;
-            input_tensort_name_ = engine_->getBindingName(i);
-            XT_LOGT(INFO, TAG, "input binding name  %s", input_tensort_name_.c_str());
-            XT_LOGT(INFO, TAG, "input binding index  %d", engine_->getBindingIndex(engine_->getBindingName(i)));
-            XT_LOGT(INFO, TAG, "input binding dim  %s", dims_str(dims).c_str());
+            input_channel = dims.d[1];
+            input_height = dims.d[2];
+            input_width = dims.d[3];
         }
         else
         {
-            output_dims_list_.push_back(dims);
-            output_tensort_name_list_.push_back(engine_->getBindingName(i));
 
-            XT_LOGT(INFO, TAG, "output binding name  %s", engine_->getBindingName(i));
-            XT_LOGT(INFO, TAG, "output binding index  %d", engine_->getBindingIndex(engine_->getBindingName(i)));
-            XT_LOGT(INFO, TAG, "output binding dim  %s", dims_str(dims).c_str());
+            std::cout << "output binding name " << engine->getBindingName(i) << std::endl;
+            std::cout << "output binding index  " << engine->getBindingIndex(engine->getBindingName(i)) << std::endl;
+            std::cout << "output binding dim  " << dims_str(dims) << std::endl;
+            output_tensort_name_list.push_back(engine->getBindingName(i));
         }
     }
 
-    printf("engine->getName %s\n", engine->getName());
-    auto dims = engine->getBindingDimensions(0);
-    // int input_batch = dims.d[0];
-    int input_batch = 1;
-    int input_channel = dims.d[1];
-    int input_height = dims.d[2];
-    int input_width = dims.d[3];
     printf("input_batch %d input_channel %d input_height %d input_width %d\n",
-           input_batch, input_channel, input_height, input_width);
+           min_batch_size, input_channel, input_height, input_width);
+    // 分配input 内存
+    int input_binding_index = engine->getBindingIndex(input_tensort_name.c_str());
+    nvinfer1::DataType type = engine->getBindingDataType(input_binding_index);
 
-    int input_numel = input_batch * input_channel * input_height * input_width;
+    std::cout << "input tensort type  " << (int)type << std::endl;
+
+    int input_numel = min_batch_size * input_channel * input_height * input_width;
     float *input_data_host = nullptr;
     float *input_data_device = nullptr;
     checkRuntime(cudaMallocHost(&input_data_host, input_numel * sizeof(float)));
     checkRuntime(cudaMalloc(&input_data_device, input_numel * sizeof(float)));
 
+    // 明确当前推理时，使用的数据输入大小
+    auto input_dims = engine->getBindingDimensions(0);
+    input_dims.d[0] = min_batch_size;
+    execution_context->setBindingDimensions(0, input_dims);
+
+    // output1 index 1 mask
+    auto output_dims_1 = engine->getBindingDimensions(1);
+    int output_batch_size = min_batch_size;
+    int output_mask_weight_size = output_dims_1.d[1];
+    int output_mask_widht = output_dims_1.d[2];
+    int output_mask_height = output_dims_1.d[3];
+
+    printf("output_dims_1 batch %d, weight_size %d, mask_widht %d mask_height %d\n",
+           output_batch_size, output_mask_weight_size, output_mask_widht, output_mask_height);
+
+    float *output_mask_data_host = nullptr;
+    float *output_mask_data_device = nullptr;
+    int output_mask_numel = output_batch_size * output_mask_weight_size * output_mask_widht * output_mask_height;
+
+    checkRuntime(cudaMallocHost(&output_mask_data_host, sizeof(float) * output_mask_numel));
+    checkRuntime(cudaMalloc(&output_mask_data_device, sizeof(float) * output_mask_numel));
+
+    // output0 index 2 box
+    auto output_dims_0 = engine->getBindingDimensions(2);
+    // int output_batch_size = output_dims.d[0];
+
+    int output_box_numbox = output_dims_0.d[1];
+    int output_box_numprob = output_dims_0.d[2];
+
+    printf("output_batch_size %d, output_numbox %d, output_numprob %d \n", output_batch_size, output_box_numbox, output_box_numprob);
+    // int num_classes = output_numprob - 4;
+    int output_box_numel = output_batch_size * output_box_numbox * output_box_numprob;
+    float *output_box_data_host = nullptr;
+    float *output_box_data_device = nullptr;
+    checkRuntime(cudaMallocHost(&output_box_data_host, sizeof(float) * output_box_numel));
+    checkRuntime(cudaMalloc(&output_box_data_device, sizeof(float) * output_box_numel));
+
+    // ///////////////////////////////////////////////////
+
     std::string image_file = root_path + "bus.jpg";
     auto image = cv::imread(image_file);
-    // 通过双线性插值对图像进行resize
-    float scale_x = input_width / (float)image.cols;
-    float scale_y = input_height / (float)image.rows;
-    float scale = std::min(scale_x, scale_y);
-    float i2d[6], d2i[6];
-    /*
-    M = [
-            scale,    0,     -scale * from.width * 0.5 + to.width * 0.5
-            0,     scale,    -scale * from.height * 0.5 + to.height * 0.5
-            0,        0,                     1
-        ]
-    */
-    i2d[0] = scale;
-    i2d[1] = 0;
-    i2d[2] = (-scale * image.cols + input_width + scale - 1) * 0.5;
-    i2d[3] = 0;
-    i2d[4] = scale;
-    i2d[5] = (-scale * image.rows + input_height + scale - 1) * 0.5;
-
-    cv::Mat m2x3_i2d(2, 3, CV_32F, i2d); // image to dst(network), 2x3 matrix
-    cv::Mat m2x3_d2i(2, 3, CV_32F, d2i); // dst to image, 2x3 matrix
-
-    cv::invertAffineTransform(m2x3_i2d, m2x3_d2i);
-
-    cv::Mat input_image(input_height, input_width, CV_8UC3);
-    // 对图像做平移缩放旋转变换,可逆
-    cv::warpAffine(image, input_image, m2x3_i2d, input_image.size(),
-                   cv::INTER_LINEAR, cv::BORDER_CONSTANT, cv::Scalar::all(114));
-    std::string warp_image_file = root_path + "input-image.jpg";
-    cv::imwrite(warp_image_file, input_image);
-
-    int image_area = input_image.cols * input_image.rows;
-    unsigned char *pimage = input_image.data;
+    float d2i[6];
+    auto warp_image = warp_affine_cpu(image, d2i);
+    int image_area = warp_image.cols * warp_image.rows;
+    unsigned char *pimage = warp_image.data;
     float *phost_b = input_data_host + image_area * 0;
     float *phost_g = input_data_host + image_area * 1;
     float *phost_r = input_data_host + image_area * 2;
@@ -445,141 +693,48 @@ void inference()
         *phost_g++ = pimage[1] / 255.0f;
         *phost_b++ = pimage[2] / 255.0f;
     }
-    ///////////////////////////////////////////////////
-    checkRuntime(cudaMemcpyAsync(input_data_device, input_data_host, input_numel * sizeof(float), cudaMemcpyHostToDevice, stream));
 
-    // 3x3输入，对应3x3输出
-    auto output_dims = engine->getBindingDimensions(1);
-    // int output_batch_size = output_dims.d[0];
-    int output_batch_size = input_batch;
-    int output_numbox = output_dims.d[1];
-    int output_numprob = output_dims.d[2];
+    std::cout << "copy input data to device  " << std::endl;
+    if (warp_image.data)
+        checkRuntime(cudaMemcpyAsync(input_data_device, input_data_host, input_numel * sizeof(float), cudaMemcpyHostToDevice, stream));
+    else
+        std::cout << "input is null " << std::endl;
 
-    printf("output_batch_size %d, output_numbox %d, output_numprob %d \n", output_batch_size, output_numbox, output_numprob);
-    int num_classes = output_numprob - 5;
-    int output_numel = output_batch_size * output_numbox * output_numprob;
-    float *output_data_host = nullptr;
-    float *output_data_device = nullptr;
-    checkRuntime(cudaMallocHost(&output_data_host, sizeof(float) * output_numel));
-    checkRuntime(cudaMalloc(&output_data_device, sizeof(float) * output_numel));
-
-    // 明确当前推理时，使用的数据输入大小
-    auto input_dims = engine->getBindingDimensions(0);
-    input_dims.d[0] = input_batch;
-
-    execution_context->setBindingDimensions(0, input_dims);
-    float *bindings[] = {input_data_device, output_data_device};
+    float *bindings[] = {input_data_device, output_mask_data_device, output_box_data_device};
+    std::cout << "infer " << std::endl;
     bool success = execution_context->enqueueV2((void **)bindings, stream, nullptr);
-    checkRuntime(cudaMemcpyAsync(output_data_host, output_data_device, sizeof(float) * output_numel, cudaMemcpyDeviceToHost, stream));
+    std::cout << "copy output to host " << std::endl;
+    checkRuntime(cudaMemcpyAsync(output_mask_data_host, output_mask_data_device, sizeof(float) * output_mask_numel, cudaMemcpyDeviceToHost, stream));
+    checkRuntime(cudaMemcpyAsync(output_box_data_host, output_box_data_device, sizeof(float) * output_box_numel, cudaMemcpyDeviceToHost, stream));
+
     checkRuntime(cudaStreamSynchronize(stream));
-
-    // decode box：从不同尺度下的预测狂还原到原输入图上(包括:预测框，类被概率，置信度）
-    // yolov11 has an output of shape (batchSize,8400, 84) ( box[x,y,w,h] + Num classes)
-    std::vector<std::vector<float>> bboxes;
-    float confidence_threshold = 0.25;
-    float nms_threshold = 0.45;
-    for (int i = 0; i < output_numbox; ++i)
+    auto boxs = decode_box_cpu(output_box_data_host, output_box_numbox, output_box_numprob, d2i);
+    std::cout << "boxs size  " << boxs.size() << std::endl;
+    for (auto &box : boxs)
     {
-        float *ptr = output_data_host + i * output_numprob;
-        float *pclass = ptr + 4;
-        int class_id = std::max_element(pclass, pclass + num_classes) - pclass;
-
-        float confidence = pclass[class_id];
-        if (confidence < confidence_threshold)
-            continue;
-
-        // 中心点、宽、高
-        float cx = ptr[0];
-        float cy = ptr[1];
-        float width = ptr[2];
-        float height = ptr[3];
-
-        // 预测框
-        float left = cx - width * 0.5;
-        float top = cy - height * 0.5;
-        float right = cx + width * 0.5;
-        float bottom = cy + height * 0.5;
-
-        // 对应图上的位置
-        float image_base_left = d2i[0] * left + d2i[2];
-        float image_base_right = d2i[0] * right + d2i[2];
-        float image_base_top = d2i[0] * top + d2i[5];
-        float image_base_bottom = d2i[0] * bottom + d2i[5];
-        bboxes.push_back({image_base_left, image_base_top, image_base_right, image_base_bottom, (float)class_id, confidence});
-    }
-    printf("decoded bboxes.size = %d\n", bboxes.size());
-
-    // nms非极大抑制
-    std::sort(bboxes.begin(), bboxes.end(), [](std::vector<float> &a, std::vector<float> &b)
-              { return a[5] > b[5]; });
-    std::vector<bool> remove_flags(bboxes.size());
-    std::vector<std::vector<float>> box_result;
-    box_result.reserve(bboxes.size());
-
-    auto iou = [](const std::vector<float> &a, const std::vector<float> &b)
-    {
-        float cross_left = std::max(a[0], b[0]);
-        float cross_top = std::max(a[1], b[1]);
-        float cross_right = std::min(a[2], b[2]);
-        float cross_bottom = std::min(a[3], b[3]);
-
-        float cross_area = std::max(0.0f, cross_right - cross_left) * std::max(0.0f, cross_bottom - cross_top);
-        float union_area = std::max(0.0f, a[2] - a[0]) * std::max(0.0f, a[3] - a[1]) + std::max(0.0f, b[2] - b[0]) * std::max(0.0f, b[3] - b[1]) - cross_area;
-        if (cross_area == 0 || union_area == 0)
-            return 0.0f;
-        return cross_area / union_area;
-    };
-
-    for (int i = 0; i < bboxes.size(); ++i)
-    {
-        if (remove_flags[i])
-            continue;
-
-        auto &ibox = bboxes[i];
-        box_result.emplace_back(ibox);
-        for (int j = i + 1; j < bboxes.size(); ++j)
-        {
-            if (remove_flags[j])
-                continue;
-
-            auto &jbox = bboxes[j];
-            if (ibox[4] == jbox[4])
-            {
-                // class matched
-                if (iou(ibox, jbox) >= nms_threshold)
-                    remove_flags[j] = true;
-            }
-        }
-    }
-    printf("box_result.size = %d\n", box_result.size());
-
-    for (int i = 0; i < box_result.size(); ++i)
-    {
-        auto &ibox = box_result[i];
-        float left = ibox[0];
-        float top = ibox[1];
-        float right = ibox[2];
-        float bottom = ibox[3];
-        int class_label = ibox[4];
-        float confidence = ibox[5];
         cv::Scalar color;
-        std::tie(color[0], color[1], color[2]) = random_color(class_label);
-        cv::rectangle(image, cv::Point(left, top), cv::Point(right, bottom), color, 3);
+        std::tie(color[0], color[1], color[2]) = random_color(box.label);
 
-        auto name = cocolabels[class_label];
-        auto caption = cv::format("%s %.2f", name, confidence);
+        cv::rectangle(warp_image, cv::Point(box.left, box.top), cv::Point(box.right, box.bottom), color, 3);
+        auto name = cocolabels[box.label];
+        auto caption = cv::format("%s %.2f", name, box.confidence);
         int text_width = cv::getTextSize(caption, 0, 1, 2, nullptr).width + 10;
-        cv::rectangle(image, cv::Point(left - 3, top - 33), cv::Point(left + text_width, top), color, -1);
-        cv::putText(image, caption, cv::Point(left, top - 5), 0, 1, cv::Scalar::all(0), 2, 16);
+        cv::rectangle(warp_image, cv::Point(box.left - 3, box.top - 33), cv::Point(box.left + text_width, box.top), color, -1);
+        cv::putText(warp_image, caption, cv::Point(box.left, box.top - 5), 0, 1, cv::Scalar::all(0), 1, 1);
     }
-    std::string output_image_file = root_path + "output-image.jpg";
-    cv::imwrite(output_image_file, image);
+    std::string save_image_file = root_path + "image-draw.jpg";
+    cv::imwrite(save_image_file, warp_image);
 
+    decode_mask_cpu(output_mask_data_host, output_mask_weight_size, output_mask_widht, output_mask_height, boxs);
+
+    std::cout << "free " << std::endl;
     checkRuntime(cudaStreamDestroy(stream));
     checkRuntime(cudaFreeHost(input_data_host));
-    checkRuntime(cudaFreeHost(output_data_host));
+    checkRuntime(cudaFreeHost(output_mask_data_host));
+    checkRuntime(cudaFreeHost(output_box_data_host));
     checkRuntime(cudaFree(input_data_device));
-    checkRuntime(cudaFree(output_data_device));
+    checkRuntime(cudaFree(output_mask_data_device));
+    checkRuntime(cudaFree(output_box_data_device));
 }
 
 int main()

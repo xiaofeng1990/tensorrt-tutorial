@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             //可执行文件的绝对路径
-            "program": "${workspaceFolder}/2.cuda-runtime-api/build/bin/yolov5-postprocess",
+            "program": "${workspaceFolder}/4.tensorrt-integrate/build/bin/yolov11-seg",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
