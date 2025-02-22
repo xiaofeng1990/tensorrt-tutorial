@@ -496,9 +496,9 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
 
         cv::Mat mask_mat = cv::Mat::zeros(160, 160, CV_32FC1);
 
-        for (int x = box.left; x < box.right; x++)
+        for (int x = box.left / 4; x < box.right / 4; x++)
         {
-            for (int y = box.top; y < box.bottom; y++)
+            for (int y = box.top / 4; y < box.bottom / 4; y++)
             {
                 float e = 0.0f;
                 for (int j = 0; j < 32; j++)
@@ -506,7 +506,13 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
                     e += box.weight[j] * predict[j * mask_size + y * mask_mat.cols + x];
                 }
                 e = 1.0f / (1.0f + expf(-e));
-                mask_mat.at<float>(y, x) = e;
+                if (e > 0.7)
+                {
+
+                    mask_mat.at<float>(y, x) = 255;
+                }
+                else
+                    mask_mat.at<float>(y, x) = 0;
             }
         }
         cv::resize(mask_mat, mask_mat, cv::Size(640, 640));
