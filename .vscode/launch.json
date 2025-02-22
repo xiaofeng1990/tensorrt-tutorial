@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             //可执行文件的绝对路径
-            "program": "${workspaceFolder}/4.tensorrt-integrate/build/bin/yolov11-seg",
+            "program": "${workspaceFolder}/4.tensorrt-integrate/build/bin/yolov5-seg",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

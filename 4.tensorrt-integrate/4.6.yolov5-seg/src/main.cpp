@@ -209,10 +209,10 @@ std::string root_path = "/home/wxf/workspace/tensorrt-tutorial/4.tensorrt-integr
 
 bool build_model()
 {
-    std::string engine_file = root_path + "yolov8n-seg_b1.engine";
+    std::string engine_file = root_path + "yolov5n-seg.engine";
     if (exists(engine_file))
     {
-        printf("yolo11n-seg_dynamic.engine has exists.\n");
+        printf("yolov5n-seg.engine has exists.\n");
         return true;
     }
     TRTLogger logger;
@@ -225,7 +225,6 @@ bool build_model()
 
     if (builder->platformHasFastFp16())
     {
-
         printf("Platform  support fast fp16\n");
         config->setFlag(nvinfer1::BuilderFlag::kFP16);
     }
@@ -236,7 +235,7 @@ bool build_model()
     }
 
     auto parser = make_shared(nvonnxparser::createParser(*network, logger));
-    std::string onnx_file = root_path + "yolov8n-seg_b1.onnx";
+    std::string onnx_file = root_path + "yolov5n-seg.onnx";
     if (!parser->parseFromFile(onnx_file.c_str(), 1))
     {
         printf("Failed to parse yolo11n-seg_dynamic.onnx\n");
@@ -394,7 +393,8 @@ float iou(const Box &a, const Box &b)
 
     return cross_area / union_area;
 }
-std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, float confidence_threshold = 0.25f, float nms_threshold = 0.45f)
+
+std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float confidence_threshold = 0.25f, float nms_threshold = 0.45f)
 {
     auto systemtime = std::chrono::system_clock::now();
     uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
@@ -402,29 +402,34 @@ std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, 
     // cx, cy, width, height, objness, classification*80
     // 一行是85列
     std::vector<Box> boxes;
-    int num_classes = clos - 36;
-
+    int num_classes = clos - 37;
     // 第一个循环，根据置信度挑选box
     for (int i = 0; i < rows; i++)
     {
         // 获得每一行的首地址
         float *pitem = predict + i * clos;
+        // 获取当前网格有目标的置信度
+        float objness = pitem[4];
+        if (objness < confidence_threshold)
+            continue;
 
         // 获取类别置信度的首地址
-        float *pclass = pitem + 4;
+        float *pclass = pitem + 5;
         // std::max_element 返回从pclass到pclass+num_classes中最大值的地址，
         // 减去 pclass 后就是索引
-        int class_id = std::max_element(pclass, pclass + num_classes) - pclass;
-        float confidence = pclass[class_id];
+        int label = std::max_element(pclass, pclass + num_classes) - pclass;
+        // 分类目标概率
+        float prob = pclass[label];
+        // 当前网格中有目标，且为某一个类别的的置信度
+        float confidence = prob * objness;
+
         if (confidence < confidence_threshold)
             continue;
 
-        // 中心点、宽、高
         float cx = pitem[0];
         float cy = pitem[1];
         float width = pitem[2];
         float height = pitem[3];
-
         // 预测框
         Box box;
         box.left = cx - width * 0.5;
@@ -432,9 +437,9 @@ std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, 
         box.right = cx + width * 0.5;
         box.bottom = cy + height * 0.5;
         box.confidence = confidence;
-        box.label = class_id;
+        box.label = label;
         // memcpy(box.weight, pitem + 84, 32 * sizeof(float));
-        std::vector<float> mask(pitem + 84, pitem + 84 + 32);
+        std::vector<float> mask(pitem + 85, pitem + 85 + 32);
         box.weight = mask;
         // 对应图上的位置
         // float image_base_left = d2i[0] * left + d2i[2];
@@ -479,26 +484,20 @@ std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, 
     return box_result;
 }
 
-void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
+#if 1
+std::vector<cv::Mat> decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
 {
     // 1 x 32 x 160 x 160
     std::vector<cv::Mat> masks;
-    float *head[32];
     // int mask_size = mask_h * mask_w;
     int mask_size = 160 * 160;
-    // for (size_t i = 0; i < mask_dim; i++)
-    // {
-    //     head[i] = predict + i * mask_size;
-    // }
-
     for (auto const &box : boxes)
     {
-
         cv::Mat mask_mat = cv::Mat::zeros(160, 160, CV_32FC1);
 
-        for (int x = box.left; x < box.right; x++)
+        for (int x = box.left / 4; x < box.right / 4; x++)
         {
-            for (int y = box.top; y < box.bottom; y++)
+            for (int y = box.top / 4; y < box.bottom / 4; y++)
             {
                 float e = 0.0f;
                 for (int j = 0; j < 32; j++)
@@ -506,7 +505,13 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
                     e += box.weight[j] * predict[j * mask_size + y * mask_mat.cols + x];
                 }
                 e = 1.0f / (1.0f + expf(-e));
-                mask_mat.at<float>(y, x) = e;
+                if (e > 0.7)
+                {
+
+                    mask_mat.at<float>(y, x) = 255;
+                }
+                else
+                    mask_mat.at<float>(y, x) = 0;
             }
         }
         cv::resize(mask_mat, mask_mat, cv::Size(640, 640));
@@ -519,12 +524,53 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
         std::string output_file = "mask_output_" + std::to_string(i) + "_.jpg";
         cv::imwrite(output_file, masks[i]);
     }
+
+    return masks;
 }
+#else
+
+std::vector<cv::Mat> decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
+{
+    // 1 x 32 x 160 x 160
+    std::vector<cv::Mat> masks;
+    // int mask_size = mask_h * mask_w;
+    int mask_size = 160 * 160;
+    cv::Mat mask_mat = cv::Mat::zeros(160, 160, CV_8UC3);
+    for (auto const &box : boxes)
+    {
+        for (int x = box.left / 4; x < box.right / 4; x++)
+        {
+            for (int y = box.top / 4; y < box.bottom / 4; y++)
+            {
+                float e = 0.0f;
+                for (int j = 0; j < 32; j++)
+                {
+                    e += box.weight[j] * predict[j * mask_size + y * mask_mat.cols + x];
+                }
+                e = 1.0f / (1.0f + expf(-e));
+                if (e > 0.5)
+                {
+                    mask_mat.at<float>(y, x) = box.label;
+                }
+                else
+                    mask_mat.at<float>(y, x) = 0;
+            }
+        }
+
+        // masks.push_back(mask_mat);
+    }
+    mask_mat = mask_mat + 100;
+    cv::resize(mask_mat, mask_mat, cv::Size(640, 640));
+    cv::imwrite("output_file.jpg", mask_mat);
+
+    return masks;
+}
+#endif
 void inference()
 {
     TRTLogger logger;
 
-    std::string engine_file = root_path + "yolo11n-seg_dynamic.engine";
+    std::string engine_file = root_path + "yolov5n-seg.engine";
     auto engine_data = load_file(engine_file);
     auto runtime = make_shared(nvinfer1::createInferRuntime(logger));
     auto engine = make_shared(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
@@ -610,9 +656,9 @@ void inference()
     checkRuntime(cudaMalloc(&input_data_device, input_numel * sizeof(float)));
 
     // 明确当前推理时，使用的数据输入大小
-    auto input_dims = engine->getBindingDimensions(0);
-    input_dims.d[0] = min_batch_size;
-    execution_context->setBindingDimensions(0, input_dims);
+    // auto input_dims = engine->getBindingDimensions(0);
+    // input_dims.d[0] = min_batch_size;
+    // execution_context->setBindingDimensions(0, input_dims);
 
     // output1 index 1 mask
     auto output_dims_1 = engine->getBindingDimensions(1);
@@ -679,7 +725,7 @@ void inference()
     checkRuntime(cudaMemcpyAsync(output_box_data_host, output_box_data_device, sizeof(float) * output_box_numel, cudaMemcpyDeviceToHost, stream));
 
     checkRuntime(cudaStreamSynchronize(stream));
-    auto boxs = decode_box_cpu(output_box_data_host, output_box_numbox, output_box_numprob, d2i);
+    auto boxs = decode_box_cpu(output_box_data_host, output_box_numbox, output_box_numprob);
     std::cout << "boxs size  " << boxs.size() << std::endl;
     for (auto &box : boxs)
     {
