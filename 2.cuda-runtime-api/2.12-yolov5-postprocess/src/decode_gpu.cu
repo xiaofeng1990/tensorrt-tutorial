@@ -34,6 +34,7 @@ static __global__ void decode_kernel(float *predict, int num_bboxes, int num_cla
     if (confidence < confidence_threshold)
         return;
     // parray第一个元素记录保存了多少个box
+    // 最大允许 max_objects 个目标，但是 parray[0] 最大可能大于max_objects 但实际只有max_objects个目标
     int index = atomicAdd(parray, 1);
     if (index >= max_objects)
         return;

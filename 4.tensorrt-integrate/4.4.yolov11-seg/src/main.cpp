@@ -483,19 +483,13 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
 {
     // 1 x 32 x 160 x 160
     std::vector<cv::Mat> masks;
-    float *head[32];
-    // int mask_size = mask_h * mask_w;
-    int mask_size = 160 * 160;
-    // for (size_t i = 0; i < mask_dim; i++)
-    // {
-    //     head[i] = predict + i * mask_size;
-    // }
 
+    int mask_size = 160 * 160;
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
     for (auto const &box : boxes)
     {
-
         cv::Mat mask_mat = cv::Mat::zeros(160, 160, CV_32FC1);
-
         for (int x = box.left / 4; x < box.right / 4; x++)
         {
             for (int y = box.top / 4; y < box.bottom / 4; y++)
@@ -518,6 +512,11 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
         cv::resize(mask_mat, mask_mat, cv::Size(640, 640));
         masks.push_back(mask_mat);
     }
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+
+    printf("cpu yolov5 mask postprocess %ld ns\n", timestamp2 - timestamp1);
+
     std::cout << "mask_list size " << masks.size() << std::endl;
     for (size_t i = 0; i < masks.size(); i++)
     {
