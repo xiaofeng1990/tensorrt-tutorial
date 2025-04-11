@@ -23,6 +23,11 @@
 
 #include <opencv2/opencv.hpp>
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
+void decode_box_kernel_invoker(float *predict, int num_bboxes, int num_classes, float confidence_threshold,
+                               float nms_threshold, float *invert_affine_matrix, float *parray, int max_objects,
+                               int NUM_BOX_ELEMENT, cudaStream_t stream);
+void decode_mask_kernel_invoker(float *output_device, float *mask_predict, int mask_dim, int mask_h, int mask_w,
+                                float *box_predict, float *boxes, int rows, int clos, int box_number);
 
 struct Box
 {
@@ -203,13 +208,13 @@ std::shared_ptr<_T> make_shared(_T *ptr)
                                { p->destroy(); });
 }
 // std::string root_path = "../4.2.yolov5-detect/data/";
-// std::string root_path = "/home/xintent/workspace/wxf/tensorrt-tutorial/4.tensorrt-integrate/build/";
+std::string root_path = "/home/xintent/workspace/wxf/tensorrt-tutorial/4.tensorrt-integrate/build/";
 
-std::string root_path = "/home/wxf/workspace/tensorrt-tutorial/4.tensorrt-integrate/build/";
+// std::string root_path = "/home/wxf/workspace/tensorrt-tutorial/4.tensorrt-integrate/build/";
 
 bool build_model()
 {
-    std::string engine_file = root_path + "yolov8n-seg_b1.engine";
+    std::string engine_file = root_path + "yolo11n-seg_dynamic.engine";
     if (exists(engine_file))
     {
         printf("yolo11n-seg_dynamic.engine has exists.\n");
@@ -236,7 +241,7 @@ bool build_model()
     }
 
     auto parser = make_shared(nvonnxparser::createParser(*network, logger));
-    std::string onnx_file = root_path + "yolov8n-seg_b1.onnx";
+    std::string onnx_file = root_path + "yolo11n-seg_dynamic.onnx";
     if (!parser->parseFromFile(onnx_file.c_str(), 1))
     {
         printf("Failed to parse yolo11n-seg_dynamic.onnx\n");
@@ -478,7 +483,29 @@ std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, 
 
     return box_result;
 }
+void decode_mask_gpu(float *mask_predict, int mask_dim, int mask_h, int mask_w, float *box_predict, float *boxes, int rows, int clos, int box_number)
+{
+    // 分配 mask_predict 内存
+    // 分配 box_predict 内存
+    // 分配 boxes 内存
 
+    // 分配输出内存
+
+    float *output_device = nullptr;
+    float *output_host = nullptr;
+    int max_objects = 100;
+    // left, top, right, bottom, confidence, class, keepflag, weight_row_index
+
+    checkRuntime(cudaMalloc(&output_device, mask_h * mask_w * sizeof(float)));
+    checkRuntime(cudaMallocHost(&output_host, mask_h * mask_w * sizeof(float)));
+    cudaMemset(output_device, 0, mask_h * mask_w * sizeof(float));
+    // checkRuntime(cudaMemcpyAsync(output_device, predict, rows * cols * sizeof(float), cudaMemcpyHostToDevice, stream));
+
+    decode_mask_kernel_invoker(output_device, mask_predict, mask_dim, mask_h, mask_w, box_predict, boxes, rows, clos, box_number);
+    checkRuntime(cudaDeviceSynchronize());
+
+    checkRuntime(cudaMemcpy(output_host, output_device, mask_h * mask_w * sizeof(float), cudaMemcpyHostToDevice));
+}
 void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
 {
     // 1 x 32 x 160 x 160
@@ -502,7 +529,6 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
                 e = 1.0f / (1.0f + expf(-e));
                 if (e > 0.7)
                 {
-
                     mask_mat.at<float>(y, x) = 255;
                 }
                 else
@@ -520,11 +546,66 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
     std::cout << "mask_list size " << masks.size() << std::endl;
     for (size_t i = 0; i < masks.size(); i++)
     {
-
         std::string output_file = "mask_output_" + std::to_string(i) + "_.jpg";
         cv::imwrite(output_file, masks[i]);
     }
 }
+
+std::vector<Box> decode_box_gpu(float *predict, int rows, int cols, float **output_device_box, float confidence_threshold = 0.25f, float nms_threshold = 0.45f)
+{
+
+    std::vector<Box> box_result;
+    cudaStream_t stream = nullptr;
+    checkRuntime(cudaStreamCreate(&stream));
+    float *predict_device = nullptr;
+    float *output_device = nullptr;
+    float *output_host = nullptr;
+    int max_objects = 100;
+    // left, top, right, bottom, confidence, class, keepflag, weight_row_index
+    int NUM_BOX_ELEMENT = 8;
+    checkRuntime(cudaMalloc(&predict_device, rows * cols * sizeof(float)));
+    checkRuntime(cudaMalloc(&output_device, sizeof(float) + max_objects * NUM_BOX_ELEMENT * sizeof(float)));
+    checkRuntime(cudaMallocHost(&output_host, sizeof(float) + max_objects * NUM_BOX_ELEMENT * sizeof(float)));
+
+    auto systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+
+    // 异步将host数据cpy到device
+    checkRuntime(cudaMemcpyAsync(predict_device, predict, rows * cols * sizeof(float), cudaMemcpyHostToDevice, stream));
+    int class_number = cols - 4 - 32;
+    decode_box_kernel_invoker(
+        predict_device, rows, class_number, confidence_threshold,
+        nms_threshold, nullptr, output_device, max_objects, NUM_BOX_ELEMENT, stream);
+
+    checkRuntime(cudaMemcpyAsync(output_host, output_device,
+                                 sizeof(int) + max_objects * NUM_BOX_ELEMENT * sizeof(float),
+                                 cudaMemcpyDeviceToHost, stream));
+
+    checkRuntime(cudaStreamSynchronize(stream));
+
+    int num_boxes = std::min((int)output_host[0], max_objects);
+    for (int i = 0; i < num_boxes; ++i)
+    {
+        float *ptr = output_host + 1 + NUM_BOX_ELEMENT * i;
+        int keep_flag = ptr[6];
+        if (keep_flag)
+        {
+            box_result.emplace_back(
+                ptr[0], ptr[1], ptr[2], ptr[3], ptr[4], (int)ptr[5]);
+        }
+    }
+    systemtime = std::chrono::system_clock::now();
+    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
+    printf("gpu yolov5 postprocess %ld ns\n", timestamp2 - timestamp1);
+
+    checkRuntime(cudaStreamDestroy(stream));
+    checkRuntime(cudaFree(predict_device));
+    // checkRuntime(cudaFree(output_device));
+    checkRuntime(cudaFreeHost(output_host));
+    *output_device_box = output_device;
+    return box_result;
+}
+
 void inference()
 {
     TRTLogger logger;
@@ -685,8 +766,10 @@ void inference()
 
     checkRuntime(cudaStreamSynchronize(stream));
     auto boxs = decode_box_cpu(output_box_data_host, output_box_numbox, output_box_numprob, d2i);
+    float *output_device_box;
+    auto boxs2 = decode_box_gpu(output_box_data_host, output_box_numbox, output_box_numprob, &output_device_box);
     std::cout << "boxs size  " << boxs.size() << std::endl;
-    for (auto &box : boxs)
+    for (auto &box : boxs2)
     {
         cv::Scalar color;
         std::tie(color[0], color[1], color[2]) = random_color(box.label);
@@ -700,9 +783,11 @@ void inference()
     }
     std::string save_image_file = root_path + "image-draw.jpg";
     cv::imwrite(save_image_file, warp_image);
+    int box_number = boxs2.size();
 
     decode_mask_cpu(output_mask_data_host, output_mask_weight_size, output_mask_widht, output_mask_height, boxs);
-
+    decode_mask_gpu(output_mask_data_device, output_mask_weight_size, output_mask_height, output_mask_widht, output_box_data_device,
+                    output_device_box, output_box_numbox, output_box_numprob, box_number);
     std::cout << "free " << std::endl;
     checkRuntime(cudaStreamDestroy(stream));
     checkRuntime(cudaFreeHost(input_data_host));

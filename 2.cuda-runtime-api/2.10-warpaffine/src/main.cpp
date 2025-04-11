@@ -2,8 +2,8 @@
 #include <cuda_runtime.h>
 #include <opencv2/opencv.hpp>
 #include <stdio.h>
-#include <opencv2/cudawarping.hpp>
-#include <opencv2/cudaimgproc.hpp>
+// #include <opencv2/cudawarping.hpp>
+// #include <opencv2/cudaimgproc.hpp>
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
 
 bool __check_cuda_runtime(cudaError_t code, const char *op, const char *file, int line)
@@ -195,6 +195,7 @@ int warpaffine_to_center_align_batch(std::vector<std::string> &image_files, cons
         pdst_device, size.width * 3, size.width * size.height * 3, size.width, size.height, count, 114);
 
     checkRuntime(cudaDeviceSynchronize());
+    // cudaThreadSynchronize();
     checkRuntime(cudaMemcpy(pdst_host, pdst_device, dst_size, cudaMemcpyDeviceToHost)); // 将预处理完的数据搬运回来
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::milliseconds>(systemtime.time_since_epoch()).count());
@@ -262,7 +263,7 @@ cv::Mat warp_affine_cpu(const cv::Mat &src)
 
     return warpt_image;
 }
-
+#if 0
 cv::cuda::HostMem warp_affine_opencv_gpu(cv::Mat &src)
 {
     // warpAffine
@@ -317,7 +318,7 @@ cv::cuda::HostMem warp_affine_opencv_gpu(cv::Mat &src)
 
     return warpt_image;
 }
-
+#endif
 int main()
 {
     /*

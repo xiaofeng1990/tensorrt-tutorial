@@ -449,7 +449,7 @@ void inference()
         bboxes.push_back({image_base_left, image_base_top, image_base_right, image_base_bottom, (float)label, confidence});
     }
     printf("decoded bboxes.size = %d\n", bboxes.size());
-
+    std::cout << "befor nms box nubmer " << bboxes.size() << std::endl;
     // nms非极大抑制
     std::sort(bboxes.begin(), bboxes.end(), [](std::vector<float> &a, std::vector<float> &b)
               { return a[5] > b[5]; });

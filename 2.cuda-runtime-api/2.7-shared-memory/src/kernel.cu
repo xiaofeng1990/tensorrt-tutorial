@@ -34,6 +34,7 @@ demo2 主要是为了演示的是如何给 共享变量进行赋值
 
 __global__ void demo2_kernel()
 {
+    // 每个block共有
     __shared__ int shared_value1;
     __shared__ int shared_value2;
 

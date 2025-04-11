@@ -73,6 +73,7 @@ std::vector<Box> decode_cpu(float *predict, int rows, int clos, float confidence
         float bottom = cy + height * 0.5;
         boxes.emplace_back(left, top, right, bottom, confidence, (float)label);
     }
+    std::cout << "befor nms box nubmer " << boxes.size() << std::endl;
     // 对所有box根据置信度排序
     std::sort(boxes.begin(), boxes.end(), [](Box &a, Box &b)
               { return a.confidence > b.confidence; });

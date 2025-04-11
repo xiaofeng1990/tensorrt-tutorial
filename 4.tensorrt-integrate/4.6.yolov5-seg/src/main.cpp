@@ -206,9 +206,9 @@ std::shared_ptr<_T> make_shared(_T *ptr)
                                { p->destroy(); });
 }
 // std::string root_path = "../4.2.yolov5-detect/data/";
-// std::string root_path = "/home/xintent/workspace/wxf/tensorrt-tutorial/4.tensorrt-integrate/build/";
+std::string root_path = "/home/xintent/workspace/wxf/tensorrt-tutorial/4.tensorrt-integrate/build/";
 
-std::string root_path = "/home/wxf/workspace/tensorrt-tutorial/4.tensorrt-integrate/build/";
+// std::string root_path = "/home/wxf/workspace/tensorrt-tutorial/4.tensorrt-integrate/build/";
 
 bool build_model()
 {

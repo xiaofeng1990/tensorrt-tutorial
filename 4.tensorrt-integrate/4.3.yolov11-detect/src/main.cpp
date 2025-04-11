@@ -180,7 +180,7 @@ std::string root_path = "./";
 
 bool build_model()
 {
-    std::string engine_file = root_path + "yolo11n.engine";
+    std::string engine_file = root_path + "yolo11s_dynamic.engine";
     if (exists(engine_file))
     {
         printf("yolov5s.engine has exists.\n");
@@ -193,7 +193,7 @@ bool build_model()
     auto network = make_shared(builder->createNetworkV2(1));
 
     auto parser = make_shared(nvonnxparser::createParser(*network, logger));
-    std::string onnx_file = root_path + "yolo11n_dynamic.onnx";
+    std::string onnx_file = root_path + "yolo11s_dynamic.onnx";
     if (!parser->parseFromFile(onnx_file.c_str(), 1))
     {
         printf("Failed to parse yolov5s.onnx\n");
@@ -250,7 +250,6 @@ bool build_model()
     FILE *f = fopen(engine_file.c_str(), "wb");
     fwrite(model_data->data(), 1, model_data->size(), f);
     fclose(f);
-
     // 卸载顺序按照构建顺序倒序
     printf("Build Done.\n");
     return true;
@@ -299,7 +298,7 @@ void inference()
 {
     TRTLogger logger;
 
-    std::string engine_file = root_path + "yolo11n.engine";
+    std::string engine_file = root_path + "yolo11s_dynamic.engine";
     auto engine_data = load_file(engine_file);
     auto runtime = make_shared(nvinfer1::createInferRuntime(logger));
     auto engine = make_shared(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
@@ -323,7 +322,7 @@ void inference()
     printf("engine->getName %s\n", engine->getName());
     auto dims = engine->getBindingDimensions(0);
     // int input_batch = dims.d[0];
-    int input_batch = 1;
+    int input_batch = 4;
     int input_channel = dims.d[1];
     int input_height = dims.d[2];
     int input_width = dims.d[3];
