@@ -20,7 +20,7 @@
 #include <functional>
 #include <unistd.h>
 #include <chrono>
-
+#include "NvInferPlugin.h"
 #include <opencv2/opencv.hpp>
 #define checkRuntime(op) __check_cuda_runtime((op), #op, __FILE__, __LINE__)
 void decode_box_kernel_invoker(float *predict, int num_bboxes, int num_classes, float confidence_threshold,
@@ -214,10 +214,10 @@ std::string root_path = "/home/xintent/workspace/wxf/tensorrt-tutorial/4.tensorr
 
 bool build_model()
 {
-    std::string engine_file = root_path + "yolo11n-seg_dynamic.engine";
+    std::string engine_file = root_path + "foundation_stereo_23-51-11.engine";
     if (exists(engine_file))
     {
-        printf("yolo11n-seg_dynamic.engine has exists.\n");
+        printf("foundation_stereo_23-51-11.engine has exists.\n");
         return true;
     }
     TRTLogger logger;
@@ -241,10 +241,10 @@ bool build_model()
     }
 
     auto parser = make_shared(nvonnxparser::createParser(*network, logger));
-    std::string onnx_file = root_path + "yolo11n-seg_dynamic.onnx";
+    std::string onnx_file = root_path + "foundation_stereo_23-51-11.onnx";
     if (!parser->parseFromFile(onnx_file.c_str(), 1))
     {
-        printf("Failed to parse yolo11n-seg_dynamic.onnx\n");
+        printf("Failed to parsefoundation_stereo_23-51-11.onnx\n");
 
         // 注意这里的几个指针还没有释放，是有内存泄漏的，后面考虑更优雅的解决
         return false;
@@ -347,7 +347,7 @@ cv::Mat warp_affine_cpu(const cv::Mat &src, float *d2i)
 {
     // warpAffine
     int input_channel = 3;
-    int input_height = 640;
+    int input_height = 480;
     int input_width = 640;
 
     float scale_x = input_width / (float)src.cols;
@@ -483,137 +483,17 @@ std::vector<Box> decode_box_cpu(float *predict, int rows, int clos, float *d2i, 
 
     return box_result;
 }
-void decode_mask_gpu(float *mask_predict, int mask_dim, int mask_h, int mask_w, float *box_predict, float *boxes, int rows, int clos, int box_number)
-{
-    // 分配 mask_predict 内存
-    // 分配 box_predict 内存
-    // 分配 boxes 内存
-
-    // 分配输出内存
-
-    float *output_device = nullptr;
-    float *output_host = nullptr;
-    int max_objects = 100;
-    // left, top, right, bottom, confidence, class, keepflag, weight_row_index
-
-    checkRuntime(cudaMalloc(&output_device, mask_h * mask_w * sizeof(float)));
-    checkRuntime(cudaMallocHost(&output_host, mask_h * mask_w * sizeof(float)));
-    cudaMemset(output_device, 0, mask_h * mask_w * sizeof(float));
-    // checkRuntime(cudaMemcpyAsync(output_device, predict, rows * cols * sizeof(float), cudaMemcpyHostToDevice, stream));
-
-    decode_mask_kernel_invoker(output_device, mask_predict, mask_dim, mask_h, mask_w, box_predict, boxes, rows, clos, box_number);
-    checkRuntime(cudaDeviceSynchronize());
-
-    checkRuntime(cudaMemcpy(output_host, output_device, mask_h * mask_w * sizeof(float), cudaMemcpyHostToDevice));
-}
-void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
-{
-    // 1 x 32 x 160 x 160
-    std::vector<cv::Mat> masks;
-
-    int mask_size = 160 * 160;
-    auto systemtime = std::chrono::system_clock::now();
-    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
-    for (auto const &box : boxes)
-    {
-        cv::Mat mask_mat = cv::Mat::zeros(160, 160, CV_32FC1);
-        for (int x = box.left / 4; x < box.right / 4; x++)
-        {
-            for (int y = box.top / 4; y < box.bottom / 4; y++)
-            {
-                float e = 0.0f;
-                for (int j = 0; j < 32; j++)
-                {
-                    e += box.weight[j] * predict[j * mask_size + y * mask_mat.cols + x];
-                }
-                e = 1.0f / (1.0f + expf(-e));
-                if (e > 0.7)
-                {
-                    mask_mat.at<float>(y, x) = 255;
-                }
-                else
-                    mask_mat.at<float>(y, x) = 0;
-            }
-        }
-        cv::resize(mask_mat, mask_mat, cv::Size(640, 640));
-        masks.push_back(mask_mat);
-    }
-    systemtime = std::chrono::system_clock::now();
-    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
-
-    printf("cpu yolov5 mask postprocess %ld ns\n", timestamp2 - timestamp1);
-
-    std::cout << "mask_list size " << masks.size() << std::endl;
-    for (size_t i = 0; i < masks.size(); i++)
-    {
-        std::string output_file = "mask_output_" + std::to_string(i) + "_.jpg";
-        cv::imwrite(output_file, masks[i]);
-    }
-}
-
-std::vector<Box> decode_box_gpu(float *predict, int rows, int cols, float **output_device_box, float confidence_threshold = 0.25f, float nms_threshold = 0.45f)
-{
-
-    std::vector<Box> box_result;
-    cudaStream_t stream = nullptr;
-    checkRuntime(cudaStreamCreate(&stream));
-    float *predict_device = nullptr;
-    float *output_device = nullptr;
-    float *output_host = nullptr;
-    int max_objects = 100;
-    // left, top, right, bottom, confidence, class, keepflag, weight_row_index
-    int NUM_BOX_ELEMENT = 8;
-    checkRuntime(cudaMalloc(&predict_device, rows * cols * sizeof(float)));
-    checkRuntime(cudaMalloc(&output_device, sizeof(float) + max_objects * NUM_BOX_ELEMENT * sizeof(float)));
-    checkRuntime(cudaMallocHost(&output_host, sizeof(float) + max_objects * NUM_BOX_ELEMENT * sizeof(float)));
-
-    auto systemtime = std::chrono::system_clock::now();
-    uint64_t timestamp1(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
-
-    // 异步将host数据cpy到device
-    checkRuntime(cudaMemcpyAsync(predict_device, predict, rows * cols * sizeof(float), cudaMemcpyHostToDevice, stream));
-    int class_number = cols - 4 - 32;
-    decode_box_kernel_invoker(
-        predict_device, rows, class_number, confidence_threshold,
-        nms_threshold, nullptr, output_device, max_objects, NUM_BOX_ELEMENT, stream);
-
-    checkRuntime(cudaMemcpyAsync(output_host, output_device,
-                                 sizeof(int) + max_objects * NUM_BOX_ELEMENT * sizeof(float),
-                                 cudaMemcpyDeviceToHost, stream));
-
-    checkRuntime(cudaStreamSynchronize(stream));
-
-    int num_boxes = std::min((int)output_host[0], max_objects);
-    for (int i = 0; i < num_boxes; ++i)
-    {
-        float *ptr = output_host + 1 + NUM_BOX_ELEMENT * i;
-        int keep_flag = ptr[6];
-        if (keep_flag)
-        {
-            box_result.emplace_back(
-                ptr[0], ptr[1], ptr[2], ptr[3], ptr[4], (int)ptr[5]);
-        }
-    }
-    systemtime = std::chrono::system_clock::now();
-    uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
-    printf("gpu yolov5 postprocess %ld ns\n", timestamp2 - timestamp1);
-
-    checkRuntime(cudaStreamDestroy(stream));
-    checkRuntime(cudaFree(predict_device));
-    // checkRuntime(cudaFree(output_device));
-    checkRuntime(cudaFreeHost(output_host));
-    *output_device_box = output_device;
-    return box_result;
-}
 
 void inference()
 {
     TRTLogger logger;
-
-    std::string engine_file = root_path + "yolo11n-seg_dynamic.engine";
+    nvinfer1::ILogger *gLogger;
+    initLibNvInferPlugins(gLogger, "");
+    std::string engine_file = root_path + "foundation_stereo.engine";
     auto engine_data = load_file(engine_file);
     auto runtime = make_shared(nvinfer1::createInferRuntime(logger));
     auto engine = make_shared(runtime->deserializeCudaEngine(engine_data.data(), engine_data.size()));
+    printf("engine_data.size() %d.\n", engine_data.size());
     if (engine == nullptr)
     {
         printf("Deserialize cuda engine failed.\n");
@@ -629,7 +509,7 @@ void inference()
     int min_batch_size;
     int opt_batch_size;
     int max_batch_size;
-    std::string input_tensort_name;
+    std::vector<std::string> input_tensort_name_list;
     std::vector<std::string> output_tensort_name_list;
     int input_channel;
     int input_height;
@@ -641,9 +521,10 @@ void inference()
         if (engine->bindingIsInput(i))
         {
             std::cout << "input binding name " << engine->getBindingName(i) << std::endl;
-            input_tensort_name = engine->getBindingName(i);
-            std::cout << "input binding dim  " << dims_str(dims) << std::endl;
+            input_tensort_name_list.push_back(engine->getBindingName(i));
+
             std::cout << "input binding index  " << engine->getBindingIndex(engine->getBindingName(i)) << std::endl;
+            std::cout << "input binding dim  " << dims_str(dims) << std::endl;
             // 动态batch
             if (dims.d[0] <= 0)
             {
@@ -681,68 +562,50 @@ void inference()
         }
     }
 
-    printf("input_batch %d input_channel %d input_height %d input_width %d\n",
-           min_batch_size, input_channel, input_height, input_width);
     // 分配input 内存
-    int input_binding_index = engine->getBindingIndex(input_tensort_name.c_str());
-    nvinfer1::DataType type = engine->getBindingDataType(input_binding_index);
+    int input_binding_index_0 = engine->getBindingIndex(input_tensort_name_list[0].c_str());
+    nvinfer1::DataType type = engine->getBindingDataType(input_binding_index_0);
 
     std::cout << "input tensort type  " << (int)type << std::endl;
 
     int input_numel = min_batch_size * input_channel * input_height * input_width;
-    float *input_data_host = nullptr;
-    float *input_data_device = nullptr;
-    checkRuntime(cudaMallocHost(&input_data_host, input_numel * sizeof(float)));
-    checkRuntime(cudaMalloc(&input_data_device, input_numel * sizeof(float)));
-
-    // 明确当前推理时，使用的数据输入大小
-    auto input_dims = engine->getBindingDimensions(0);
-    input_dims.d[0] = min_batch_size;
-    execution_context->setBindingDimensions(0, input_dims);
-
-    // output1 index 1 mask
-    auto output_dims_1 = engine->getBindingDimensions(1);
-    int output_batch_size = min_batch_size;
-    int output_mask_weight_size = output_dims_1.d[1];
-    int output_mask_widht = output_dims_1.d[2];
-    int output_mask_height = output_dims_1.d[3];
-
-    printf("output_dims_1 batch %d, weight_size %d, mask_widht %d mask_height %d\n",
-           output_batch_size, output_mask_weight_size, output_mask_widht, output_mask_height);
-
-    float *output_mask_data_host = nullptr;
-    float *output_mask_data_device = nullptr;
-    int output_mask_numel = output_batch_size * output_mask_weight_size * output_mask_widht * output_mask_height;
-
-    checkRuntime(cudaMallocHost(&output_mask_data_host, sizeof(float) * output_mask_numel));
-    checkRuntime(cudaMalloc(&output_mask_data_device, sizeof(float) * output_mask_numel));
+    float *input_data_host_left = nullptr;
+    float *input_data_device_left = nullptr;
+    float *input_data_host_right = nullptr;
+    float *input_data_device_right = nullptr;
+    checkRuntime(cudaMallocHost(&input_data_host_left, input_numel * sizeof(float)));
+    checkRuntime(cudaMalloc(&input_data_device_left, input_numel * sizeof(float)));
+    checkRuntime(cudaMallocHost(&input_data_host_right, input_numel * sizeof(float)));
+    checkRuntime(cudaMalloc(&input_data_device_right, input_numel * sizeof(float)));
 
     // output0 index 2 box
-    auto output_dims_0 = engine->getBindingDimensions(2);
-    // int output_batch_size = output_dims.d[0];
+    int output_binding_index = engine->getBindingIndex(output_tensort_name_list[0].c_str());
+    type = engine->getBindingDataType(output_binding_index);
 
-    int output_box_numbox = output_dims_0.d[1];
-    int output_box_numprob = output_dims_0.d[2];
+    std::cout << "output tensort type  " << (int)type << std::endl;
 
-    printf("output_batch_size %d, output_numbox %d, output_numprob %d \n", output_batch_size, output_box_numbox, output_box_numprob);
+    auto output_dims = engine->getBindingDimensions(output_binding_index);
+    int output_batch_size = output_dims.d[0];
+    int output_channle = output_dims.d[1];
+    int output_height = output_dims.d[2];
+    int output_width = output_dims.d[3];
+    printf("output_batch_size %d, output_channle %d, output_height %d ,output_width %d\n", output_batch_size, output_channle, output_height, output_width);
     // int num_classes = output_numprob - 4;
-    int output_box_numel = output_batch_size * output_box_numbox * output_box_numprob;
-    float *output_box_data_host = nullptr;
-    float *output_box_data_device = nullptr;
-    checkRuntime(cudaMallocHost(&output_box_data_host, sizeof(float) * output_box_numel));
-    checkRuntime(cudaMalloc(&output_box_data_device, sizeof(float) * output_box_numel));
+    int output_numel = output_batch_size * output_channle * output_height * output_width;
+    float *output_data_host = nullptr;
+    float *output_data_device = nullptr;
+    checkRuntime(cudaMallocHost(&output_data_host, sizeof(float) * output_numel));
+    checkRuntime(cudaMalloc(&output_data_device, sizeof(float) * output_numel));
 
-    // ///////////////////////////////////////////////////
-
-    std::string image_file = root_path + "bus.jpg";
-    auto image = cv::imread(image_file);
+    std::string image_file_left = root_path + "left.png";
+    auto image = cv::imread(image_file_left);
     float d2i[6];
     auto warp_image = warp_affine_cpu(image, d2i);
     int image_area = warp_image.cols * warp_image.rows;
     unsigned char *pimage = warp_image.data;
-    float *phost_b = input_data_host + image_area * 0;
-    float *phost_g = input_data_host + image_area * 1;
-    float *phost_r = input_data_host + image_area * 2;
+    float *phost_b = input_data_host_left + image_area * 0;
+    float *phost_g = input_data_host_left + image_area * 1;
+    float *phost_r = input_data_host_left + image_area * 2;
     for (int i = 0; i < image_area; ++i, pimage += 3)
     {
         // 注意这里的顺序rgb调换了
@@ -751,59 +614,54 @@ void inference()
         *phost_b++ = pimage[2] / 255.0f;
     }
 
-    std::cout << "copy input data to device  " << std::endl;
+    std::cout << "copy left input data to device  " << std::endl;
     if (warp_image.data)
-        checkRuntime(cudaMemcpyAsync(input_data_device, input_data_host, input_numel * sizeof(float), cudaMemcpyHostToDevice, stream));
+        checkRuntime(cudaMemcpyAsync(input_data_device_left, input_data_host_left, input_numel * sizeof(float), cudaMemcpyHostToDevice, stream));
     else
         std::cout << "input is null " << std::endl;
 
-    float *bindings[] = {input_data_device, output_mask_data_device, output_box_data_device};
+    std::string image_file_right = root_path + "right.png";
+    auto image_right = cv::imread(image_file_right);
+    float d2i_right[6];
+    auto warp_image_right = warp_affine_cpu(image_right, d2i_right);
+    int image_area_right = warp_image_right.cols * warp_image_right.rows;
+    unsigned char *pimage_right = warp_image_right.data;
+    float *phost_b_right = input_data_host_right + image_area_right * 0;
+    float *phost_g_right = input_data_host_right + image_area_right * 1;
+    float *phost_r_right = input_data_host_right + image_area_right * 2;
+    for (int i = 0; i < image_area_right; ++i, pimage_right += 3)
+    {
+        // 注意这里的顺序rgb调换了
+        *phost_r_right++ = pimage_right[0] / 255.0f;
+        *phost_g_right++ = pimage_right[1] / 255.0f;
+        *phost_b_right++ = pimage_right[2] / 255.0f;
+    }
+
+    std::cout << "copy right input data to device  " << std::endl;
+    if (warp_image.data)
+        checkRuntime(cudaMemcpyAsync(input_data_device_right, input_data_host_right, input_numel * sizeof(float), cudaMemcpyHostToDevice, stream));
+    else
+        std::cout << "input is null " << std::endl;
+
+    float *bindings[] = {input_data_device_left, input_data_device_right, output_data_device};
     std::cout << "infer " << std::endl;
+    auto start_time_ = std::chrono::high_resolution_clock::now();
     bool success = execution_context->enqueueV2((void **)bindings, stream, nullptr);
     std::cout << "copy output to host " << std::endl;
-    checkRuntime(cudaMemcpyAsync(output_mask_data_host, output_mask_data_device, sizeof(float) * output_mask_numel, cudaMemcpyDeviceToHost, stream));
-    checkRuntime(cudaMemcpyAsync(output_box_data_host, output_box_data_device, sizeof(float) * output_box_numel, cudaMemcpyDeviceToHost, stream));
-
+    checkRuntime(cudaMemcpyAsync(output_data_host, output_data_device, sizeof(float) * output_numel, cudaMemcpyDeviceToHost, stream));
     checkRuntime(cudaStreamSynchronize(stream));
-    auto boxs = decode_box_cpu(output_box_data_host, output_box_numbox, output_box_numprob, d2i);
-    float *output_device_box;
-    auto boxs2 = decode_box_gpu(output_box_data_host, output_box_numbox, output_box_numprob, &output_device_box);
-    std::cout << "boxs size  " << boxs.size() << std::endl;
-    for (auto &box : boxs2)
-    {
-        cv::Scalar color;
-        std::tie(color[0], color[1], color[2]) = random_color(box.label);
+    auto stop_time_ = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop_time_ - start_time_);
 
-        cv::rectangle(warp_image, cv::Point(box.left, box.top), cv::Point(box.right, box.bottom), color, 3);
-        auto name = cocolabels[box.label];
-        auto caption = cv::format("%s %.2f", name, box.confidence);
-        int text_width = cv::getTextSize(caption, 0, 1, 2, nullptr).width + 10;
-        cv::rectangle(warp_image, cv::Point(box.left - 3, box.top - 33), cv::Point(box.left + text_width, box.top), color, -1);
-        cv::putText(warp_image, caption, cv::Point(box.left, box.top - 5), 0, 1, cv::Scalar::all(0), 1, 1);
-    }
-    std::string save_image_file = root_path + "image-draw.jpg";
-    cv::imwrite(save_image_file, warp_image);
-    int box_number = boxs2.size();
-
-    decode_mask_cpu(output_mask_data_host, output_mask_weight_size, output_mask_widht, output_mask_height, boxs);
-    decode_mask_gpu(output_mask_data_device, output_mask_weight_size, output_mask_height, output_mask_widht, output_box_data_device,
-                    output_device_box, output_box_numbox, output_box_numprob, box_number);
-    std::cout << "free " << std::endl;
-    checkRuntime(cudaStreamDestroy(stream));
-    checkRuntime(cudaFreeHost(input_data_host));
-    checkRuntime(cudaFreeHost(output_mask_data_host));
-    checkRuntime(cudaFreeHost(output_box_data_host));
-    checkRuntime(cudaFree(input_data_device));
-    checkRuntime(cudaFree(output_mask_data_device));
-    checkRuntime(cudaFree(output_box_data_device));
+    std::cout << "duration " << duration.count() << std::endl;
 }
-
+// https://github.com/NVlabs/FoundationStereo/tree/master
 int main()
 {
-    if (!build_model())
-    {
-        return -1;
-    }
+    // if (!build_model())
+    // {
+    //     return -1;
+    // }
     inference();
     return 0;
 }

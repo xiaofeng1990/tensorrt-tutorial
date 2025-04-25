@@ -628,7 +628,7 @@ void inference()
         {
             std::cout << "input binding name " << engine->getBindingName(i) << std::endl;
             input_tensort_name = engine->getBindingName(i);
-
+            std::cout << "input binding dim  " << dims_str(dims) << std::endl;
             std::cout << "input binding index  " << engine->getBindingIndex(engine->getBindingName(i)) << std::endl;
             // 动态batch
             if (dims.d[0] <= 0)
