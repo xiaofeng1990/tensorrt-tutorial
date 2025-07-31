@@ -506,7 +506,7 @@ void decode_mask_gpu(float *mask_predict, int mask_dim, int mask_h, int mask_w, 
 
     checkRuntime(cudaMemcpy(output_host, output_device, mask_h * mask_w * sizeof(float), cudaMemcpyHostToDevice));
 }
-void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
+std::vector<cv::Mat> decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::vector<Box> boxes)
 {
     // 1 x 32 x 160 x 160
     std::vector<cv::Mat> masks;
@@ -527,16 +527,26 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
                     e += box.weight[j] * predict[j * mask_size + y * mask_mat.cols + x];
                 }
                 e = 1.0f / (1.0f + expf(-e));
-                if (e > 0.7)
-                {
-                    mask_mat.at<float>(y, x) = 255;
-                }
-                else
-                    mask_mat.at<float>(y, x) = 0;
+                mask_mat.at<float>(y, x) = e;
+                // if (e > 0.7)
+                // {
+                //     mask_mat.at<float>(y, x) = e;
+                // }
+                // else
+                //     mask_mat.at<float>(y, x) = 0;
             }
         }
-        cv::resize(mask_mat, mask_mat, cv::Size(640, 640));
-        masks.push_back(mask_mat);
+        cv::resize(mask_mat, mask_mat, cv::Size(640, 640), 0, 0, cv::INTER_LINEAR);
+        cv::Mat binary_mask = mask_mat > 0.5f;
+
+        cv::Mat fall_mask = cv::Mat::zeros(640, 640, CV_32FC1);
+
+        cv::Rect roi(box.left, box.top, box.right - box.left, box.bottom - box.top);
+        cv::Mat roi_mask = mask_mat(roi);
+        cv::Mat roi_dest = fall_mask(roi);
+        roi_mask.copyTo(roi_dest);
+
+        masks.push_back(fall_mask);
     }
     systemtime = std::chrono::system_clock::now();
     uint64_t timestamp2(std::chrono::duration_cast<std::chrono::microseconds>(systemtime.time_since_epoch()).count());
@@ -549,6 +559,7 @@ void decode_mask_cpu(float *predict, int mask_dim, int mask_h, int mask_w, std::
         std::string output_file = "mask_output_" + std::to_string(i) + "_.jpg";
         cv::imwrite(output_file, masks[i]);
     }
+    return masks;
 }
 
 std::vector<Box> decode_box_gpu(float *predict, int rows, int cols, float **output_device_box, float confidence_threshold = 0.25f, float nms_threshold = 0.45f)
@@ -769,25 +780,38 @@ void inference()
     float *output_device_box;
     auto boxs2 = decode_box_gpu(output_box_data_host, output_box_numbox, output_box_numprob, &output_device_box);
     std::cout << "boxs size  " << boxs.size() << std::endl;
-    for (auto &box : boxs2)
+    for (auto &box : boxs)
     {
         cv::Scalar color;
         std::tie(color[0], color[1], color[2]) = random_color(box.label);
 
-        cv::rectangle(warp_image, cv::Point(box.left, box.top), cv::Point(box.right, box.bottom), color, 3);
-        auto name = cocolabels[box.label];
-        auto caption = cv::format("%s %.2f", name, box.confidence);
-        int text_width = cv::getTextSize(caption, 0, 1, 2, nullptr).width + 10;
-        cv::rectangle(warp_image, cv::Point(box.left - 3, box.top - 33), cv::Point(box.left + text_width, box.top), color, -1);
-        cv::putText(warp_image, caption, cv::Point(box.left, box.top - 5), 0, 1, cv::Scalar::all(0), 1, 1);
+        cv::rectangle(warp_image, cv::Point(box.left, box.top), cv::Point(box.right, box.bottom), color, 1);
+        // auto name = cocolabels[box.label];
+        // auto caption = cv::format("%s %.2f", name, box.confidence);
+        // int text_width = cv::getTextSize(caption, 0, 1, 2, nullptr).width + 10;
+        // cv::rectangle(warp_image, cv::Point(box.left - 3, box.top - 33), cv::Point(box.left + text_width, box.top), color, -1);
+        // cv::putText(warp_image, caption, cv::Point(box.left, box.top - 5), 0, 1, cv::Scalar::all(0), 1, 1);
+    }
+
+    int box_number = boxs.size();
+
+    auto masks = decode_mask_cpu(output_mask_data_host, output_mask_weight_size, output_mask_widht, output_mask_height, boxs);
+    // decode_mask_gpu(output_mask_data_device, output_mask_weight_size, output_mask_height, output_mask_widht, output_box_data_device,
+    //                 output_device_box, output_box_numbox, output_box_numprob, box_number);
+    for (auto mask : masks)
+    {
+        cv::Mat mask_color;
+        cv::Mat dst_u8;
+        mask.convertTo(dst_u8, CV_8U);
+        cv::cvtColor(dst_u8, mask_color, cv::COLOR_GRAY2BGR);
+        std::vector<std::vector<cv::Point>> contours;
+        std::vector<cv::Vec4i> hierarchy;
+        cv::findContours(dst_u8, contours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_SIMPLE);
+        // 轮廓填充
+        drawContours(warp_image, contours, -1, cv::Scalar(0, 255, 0), 1);
     }
     std::string save_image_file = root_path + "image-draw.jpg";
     cv::imwrite(save_image_file, warp_image);
-    int box_number = boxs2.size();
-
-    decode_mask_cpu(output_mask_data_host, output_mask_weight_size, output_mask_widht, output_mask_height, boxs);
-    decode_mask_gpu(output_mask_data_device, output_mask_weight_size, output_mask_height, output_mask_widht, output_box_data_device,
-                    output_device_box, output_box_numbox, output_box_numprob, box_number);
     std::cout << "free " << std::endl;
     checkRuntime(cudaStreamDestroy(stream));
     checkRuntime(cudaFreeHost(input_data_host));
