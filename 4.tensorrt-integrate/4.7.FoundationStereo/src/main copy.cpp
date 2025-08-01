@@ -618,33 +618,27 @@ void inference()
     float *output_data_device = nullptr;
     checkRuntime(cudaMallocHost(&output_data_host, sizeof(float) * output_numel));
     checkRuntime(cudaMalloc(&output_data_device, sizeof(float) * output_numel));
-    auto start_time_ = std::chrono::high_resolution_clock::now();
+
     std::string image_file_left = root_path + "left.png";
     auto image = cv::imread(image_file_left);
     // BGR转RGB
-    // cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
+    cv::cvtColor(image, image, cv::COLOR_BGR2RGB);
     cv::Mat resized;
     cv::resize(image, resized, cv::Size(input_width,input_height));
-    {
-        int image_area = resized.cols * resized.rows;
-        unsigned char *pimage = resized.data;
-        float *phost_b = input_data_host_left + image_area * 0;
-        float *phost_g = input_data_host_left + image_area * 1;
-        float *phost_r = input_data_host_left + image_area * 2;
-        for (int i = 0; i < image_area; ++i, pimage += 3)
-        {
-            // 注意这里的顺序rgb调换了
-            *phost_r++ = pimage[0] ;
-            *phost_g++ = pimage[1] ;
-            *phost_b++ = pimage[2] ;
-        }
-    }
-
-   
+    
+    std::cout << "image cols " << image.cols << std::endl;
+    std::cout << "image rows " << image.rows << std::endl;
+    std::vector<cv::Mat> channels;
+    cv::split(resized, channels);
+    cv::Mat chw;
+    cv::vconcat(channels, chw);
+    chw.reshape(1, {static_cast<int>(channels.size()), resized.rows, resized.cols});
+    cv::Mat float_image;
+    chw.convertTo(float_image, CV_32F);
     std::cout
         << "copy left input data to device  " << std::endl;
-    if (resized.data)
-        checkRuntime(cudaMemcpy(input_data_device_left, input_data_host_left, input_numel * sizeof(float), cudaMemcpyHostToDevice));
+    if (chw.data)
+        checkRuntime(cudaMemcpy(input_data_device_left, float_image.data, input_numel * sizeof(float), cudaMemcpyHostToDevice));
     else
         std::cout << "input is null " << std::endl;
 
@@ -652,50 +646,37 @@ void inference()
     auto image_right = cv::imread(image_file_right);
     cv::Mat resized_right;
     cv::resize(image_right, resized_right, cv::Size(input_width, input_height));
-    {
-        int image_area = resized_right.cols * resized_right.rows;
-        unsigned char *pimage = resized_right.data;
-        float *phost_b = input_data_host_right + image_area * 0;
-        float *phost_g = input_data_host_right + image_area * 1;
-        float *phost_r = input_data_host_right + image_area * 2;
-        for (int i = 0; i < image_area; ++i, pimage += 3)
-        {
-            // 注意这里的顺序rgb调换了
-            *phost_r++ = pimage[0];
-            *phost_g++ = pimage[1];
-            *phost_b++ = pimage[2] ;
-        }
-    }
-    // std::vector<cv::Mat> channels_right;
-    // cv::split(resized_right, channels_right); // 分离为 B, G, R 三个单通道图像
+    std::vector<cv::Mat> channels_right;
+    cv::split(resized_right, channels_right); // 分离为 B, G, R 三个单通道图像
 
-    // cv::Mat chw_right;
-    // cv::vconcat(channels_right, chw_right);
-    // chw_right.reshape(1, {static_cast<int>(channels_right.size()), resized_right.rows, resized_right.cols});
+    cv::Mat chw_right;
+    cv::vconcat(channels_right, chw_right);
+    chw_right.reshape(1, {static_cast<int>(channels_right.size()), resized_right.rows, resized_right.cols});
 
-    // cv::imwrite("chw_right.png", chw_right);
-    // std::cout << "copy right input data to device  " << std::endl;
-    // cv::Mat float_image_right;
-    // chw_right.convertTo(float_image_right, CV_32F);
-    if (resized_right.data)
-        checkRuntime(cudaMemcpy(input_data_device_right, input_data_host_right, input_numel * sizeof(float), cudaMemcpyHostToDevice));
+    cv::imwrite("chw_right.png", chw_right);
+    std::cout << "copy right input data to device  " << std::endl;
+    cv::Mat float_image_right;
+    chw_right.convertTo(float_image_right, CV_32F);
+    if (float_image_right.data)
+        checkRuntime(cudaMemcpy(input_data_device_right, float_image_right.data, input_numel * sizeof(float), cudaMemcpyHostToDevice));
     else
         std::cout << "input is null " << std::endl;
 
     float *bindings[] = {input_data_device_left, input_data_device_right, output_data_device};
     std::cout << "infer " << std::endl;
-    
+    auto start_time_ = std::chrono::high_resolution_clock::now();
 
     bool success = execution_context->executeV2((void **)bindings);
     std::cout << "copy output to host " << std::endl;
     checkRuntime(cudaMemcpy(output_data_host, output_data_device, sizeof(float) * output_numel, cudaMemcpyDeviceToHost));
     // checkRuntime(cudaStreamSynchronize(stream));
     cv::Mat mat(output_height, output_width, CV_32FC1, output_data_host);
+
     // std::cout << "mat: " << mat << std::endl;
     double min_val, max_val;
      cv::imwrite("output_image2.png", mat);
     cv::minMaxLoc(mat, &min_val, &max_val);
-    printf("min_val: %f, max_val: %f\n", min_val, max_val);
+    printf("min_val: %f, max_val: %f", min_val, max_val);
 
     cv::Mat  vis = ((mat - min_val) / (max_val - min_val));
     cv::Mat vis_2 = cv::max(cv::min(vis, 1.0), 0.0);
@@ -703,11 +684,10 @@ void inference()
     cv::Mat vis_uint8;
     vis_2.convertTo(vis_uint8, CV_8U);
     cv::Mat color_mapped;
+    // vis_uint8 = vis_uint8.reshape(1, {1, output_width, output_height});
 
     cv::applyColorMap(vis_uint8, color_mapped, cv::COLORMAP_TURBO);
-    cv::resize(color_mapped, color_mapped, cv::Size(image_right.cols, image_right.rows));
     cv::imwrite("output_image.png", color_mapped);
-
     
     auto stop_time_ = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(stop_time_ - start_time_);
